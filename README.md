@@ -2,11 +2,11 @@
 
 # Jamun
 
-Command suggestions, right where you type. A native completion popup for **zsh on macOS**, powered by the Fig completion engine.
+Command suggestions with a nice completion popup for **zsh on macOS**, Powered Fig completion engine.
 
 <img src="assets/screenshot.png" width="720" alt="Jamun suggesting gh subcommands in Terminal">
 
-Works in Terminal.app and VS Code's integrated terminal.
+Works in macOS terminal and VSCode, haven't tested elsewhere.
 
 **Install**
 
