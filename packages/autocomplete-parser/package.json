@@ -1,0 +1,32 @@
+{
+  "name": "@jamun/autocomplete-parser",
+  "version": "0.2.0",
+  "license": "MIT OR Apache-2.0",
+  "author": "Amazon Web Services",
+  "type": "module",
+  "exports": "./src/index.ts",
+  "scripts": {
+    "test": "vitest"
+  },
+  "dependencies": {
+    "@jamun/api-bindings-wrappers": "*",
+    "@jamun/api-bindings": "*",
+    "@jamun/shell-parser": "*",
+    "@fig/autocomplete-generators": "^2.4.0",
+    "@fig/autocomplete-helpers": "^2.0.0",
+    "@fig/autocomplete-shared": "^1.1.2",
+    "loglevel": "^1.9.2",
+    "semver": "^7.7.2",
+    "zod": "^3.25.7"
+  },
+  "devDependencies": {
+    "@jamun/tsconfig": "*",
+    "@jamun/types": "*",
+    "@jamun/shared": "*",
+    "@types/semver": "^7.7.0",
+    "@withfig/autocomplete-types": "^1.31.0",
+    "typescript": "^5.8.3",
+    "vitest": "^3.0.8"
+  },
+  "private": true
+}

@@ -1,0 +1,24 @@
+{
+  "name": "@jamun/api-bindings-wrappers",
+  "version": "0.2.0",
+  "license": "MIT OR Apache-2.0",
+  "author": "Amazon Web Services",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./*": "./src/*.ts"
+  },
+  "scripts": {},
+  "dependencies": {
+    "@jamun/api-bindings": "*",
+    "loglevel": "^1.9.2"
+  },
+  "devDependencies": {
+    "@jamun/tsconfig": "*",
+    "@jamun/types": "*",
+    "@jamun/shared": "*",
+    "@withfig/autocomplete-types": "^1.31.0",
+    "typescript": "^5.8.3"
+  },
+  "private": true
+}

@@ -1,0 +1,19 @@
+{
+  "name": "jamun",
+  "private": true,
+  "version": "0.0.1",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build:web": "npm run build -w @jamun/web",
+    "build:host": "./scripts/build-host.sh",
+    "build": "npm run build:web && npm run build:host",
+    "typecheck": "npm run typecheck -w @jamun/web",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@withfig/autocomplete": "2.692.3",
+    "jsdom": "^29.1.1"
+  }
+}

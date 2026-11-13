@@ -1,0 +1,10 @@
+{
+  "name": "@jamun/fuzzysort",
+  "version": "0.1.0",
+  "license": "MIT",
+  "author": "Amazon Web Services",
+  "type": "module",
+  "exports": "./fuzzysort.js",
+  "types": "./fuzzysort.d.ts",
+  "private": true
+}

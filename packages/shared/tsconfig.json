@@ -1,0 +1,8 @@
+{
+  "extends": ["@jamun/tsconfig/base.json", "@jamun/tsconfig/dom.json"],
+  "compilerOptions": {
+    "outDir": "dist",
+    "types": ["@jamun/types", "@withfig/autocomplete-types"]
+  },
+  "include": ["src"]
+}

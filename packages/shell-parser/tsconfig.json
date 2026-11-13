@@ -1,0 +1,7 @@
+{
+  "extends": ["@jamun/tsconfig/base.json", "@jamun/tsconfig/dom.json"],
+  "compilerOptions": {
+    "outDir": "dist"
+  },
+  "include": ["src"]
+}

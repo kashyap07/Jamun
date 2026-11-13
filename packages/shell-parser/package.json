@@ -1,0 +1,20 @@
+{
+  "name": "@jamun/shell-parser",
+  "version": "0.1.0",
+  "license": "MIT OR Apache-2.0",
+  "author": "Amazon Web Services",
+  "type": "module",
+  "exports": "./src/index.ts",
+  "scripts": {
+    "test": "vitest"
+  },
+  "dependencies": {
+    "@jamun/shared": "*"
+  },
+  "devDependencies": {
+    "@jamun/tsconfig": "*",
+    "typescript": "^5.8.3",
+    "vitest": "^3.0.8"
+  },
+  "private": true
+}
