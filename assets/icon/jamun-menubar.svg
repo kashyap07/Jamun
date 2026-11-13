@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 18 18" width="18" height="18">
+  <!-- Jamun menu bar glyph, matching Jamun.icon. Template image: black plus alpha only, chevron is a real cutout. -->
+  <defs>
+    <mask id="cut" maskUnits="userSpaceOnUse" x="0" y="0" width="18" height="18">
+      <rect width="18" height="18" fill="#fff"/>
+      <path d="M7.4 8.1 L9.8 10.1 L7.4 12.1" fill="none" stroke="#000" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </mask>
+  </defs>
+  <g mask="url(#cut)" fill="#000">
+    <g transform="translate(8.6 10.1) rotate(45) scale(0.0225)">
+      <path d="M0 -296 C 0 -330 2 -356 12 -384" fill="none" stroke="#000" stroke-width="40" stroke-linecap="round"/>
+      <path d="M8 -372 C -40 -444 -140 -422 -195 -352 C -130 -316 -40 -320 8 -372 Z"/>
+      <path d="M0 -310 C 150 -310 200 -190 200 20 C 200 215 160 310 0 310 C -160 310 -200 215 -200 20 C -200 -190 -150 -310 0 -310 Z"/>
+    </g>
+  </g>
+</svg>

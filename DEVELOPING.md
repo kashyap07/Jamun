@@ -1,6 +1,6 @@
-Jamun adds a completion popup to macOS Terminal.app using a Swift host, zsh widgets, and a React completion engine adapted from Fig.
+Jamun adds a completion popup to macOS terminals using a Swift host, zsh widgets, and a React completion engine adapted from Fig.
 
-- Supported: macOS 13+, Terminal.app, interactive zsh 5.9, local terminal sessions.
+- Supported: macOS 13+, interactive zsh 5.9, local terminal sessions in Terminal.app and xterm.js based terminals such as VS Code. The host accepts whichever app owns the shell process and needs that app to expose the caret through Accessibility.
 - Building the Liquid Glass code requires a macOS 26+ SDK; older supported macOS versions use the material fallback.
 - iTerm2, Warp, remote SSH shells, and arbitrary terminal emulators are not currently supported.
 - This revision uses shell/bridge protocol v2. Restart old shells after installing the updated integration.

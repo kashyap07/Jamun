@@ -14,6 +14,7 @@ enum CaretError: Error, Equatable, CustomStringConvertible {
     case noSelectedRange(Int32)
     case selectionActive(Int)
     case noBounds(Int32)
+    case notATerminal
 
     var description: String {
         switch self {
@@ -21,13 +22,26 @@ enum CaretError: Error, Equatable, CustomStringConvertible {
         case .noSelectedRange(let code): return "no selected text range (AXError \(code))"
         case .selectionActive(let length): return "text selection active (length \(length))"
         case .noBounds(let code): return "no bounds for caret range (AXError \(code))"
+        case .notATerminal: return "focused web element is not a terminal"
         }
     }
 }
 
 /// Reads the caret position of an app through the Accessibility API.
 /// Same approach Fig used: focused element, selected text range, bounds for that range.
+/// Web based terminals (VS Code and other Electron apps) use xterm.js, which
+/// keeps a cell sized helper textarea on the cursor; its frame is the caret.
 enum CaretTracker {
+    private static let xtermCaretClass = "xterm-helper-textarea"
+
+    /// Electron apps build no accessibility tree until asked. This is the
+    /// switch Electron provides for tools like this one; other apps ignore it.
+    static func prepare(pid: pid_t) {
+        let app = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(app, 0.25)
+        AXUIElementSetAttributeValue(app, "AXManualAccessibility" as CFString, kCFBooleanTrue)
+    }
+
     static func isTrusted(prompt: Bool) -> Bool {
         let key = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
         return AXIsProcessTrustedWithOptions([key: prompt] as CFDictionary)
@@ -57,6 +71,18 @@ enum CaretTracker {
         switch focusedElement(pid: pid) {
         case .success(let el): element = el
         case .failure(let err): return .failure(err)
+        }
+
+        // Only web content has DOM classes. There the text range APIs describe
+        // the hidden textarea, not the terminal grid, so use its frame.
+        var classValue: CFTypeRef?
+        if AXUIElementCopyAttributeValue(element, "AXDOMClassList" as CFString, &classValue) == .success,
+           let classes = classValue as? [String] {
+            guard classes.contains(xtermCaretClass) else { return .failure(.notATerminal) }
+            guard let rect = frame(of: element), rect.height > 0, rect.width > 0,
+                  rect.origin.x.isFinite, rect.origin.y.isFinite
+            else { return .failure(.noBounds(-1)) }
+            return .success(Caret(rect: rect, strategy: "xterm-textarea"))
         }
 
         var rangeValue: CFTypeRef?
@@ -157,7 +183,7 @@ struct Int32Error: Error {
     init(_ code: Int32) { self.code = code }
 }
 
-/// Watches Terminal for anything that can leave the popup pointing at the
+/// Watches the terminal app for anything that can leave the popup pointing at the
 /// wrong place: another window or tab taking focus, or the window moving.
 final class TerminalWatcher {
     private var observer: AXObserver?
@@ -177,10 +203,11 @@ final class TerminalWatcher {
         self.onChange = onChange
     }
 
-    /// Safe to call often. Re-attaches only when Terminal has a new pid.
+    /// Safe to call often. Re-attaches only when the terminal app has a new pid.
     func attach(to pid: pid_t) {
         guard pid != self.pid else { return }
         detach()
+        CaretTracker.prepare(pid: pid)
 
         var created: AXObserver?
         let callback: AXObserverCallback = { _, _, _, context in

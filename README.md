@@ -1,8 +1,14 @@
+<img src="assets/icon/jamun.png" width="128" alt="Jamun app icon">
+
 # Jamun
 
-Command suggestions, right where you type. A native completion popup for **macOS Terminal + zsh**, powered by the Fig completion engine.
+Command suggestions, right where you type. A native completion popup for **zsh on macOS**, powered by the Fig completion engine.
 
-**Get started**
+<img src="assets/screenshot.png" width="720" alt="Jamun suggesting gh subcommands in Terminal">
+
+Works in Terminal.app and VS Code's integrated terminal.
+
+**Install**
 
 Requires Node.js 22.16+, macOS 13+, and Xcode with the macOS 26+ SDK.
 
@@ -13,11 +19,9 @@ npm run build
 
 1. Move `build/Jamun.app` to Applications and open it.
 2. Choose **Set Up Shell Integration…** from the Jamun menu.
-3. Grant **Accessibility** access, then open a new Terminal window.
+3. Grant **Accessibility** access, then open a new terminal window.
 
-When updating, install the app and its bundled shell integration together. Existing terminal sessions need restarting.
-
-**Keyboard shortcuts**
+**Keys**
 
 | Key | Action |
 | --- | --- |
@@ -28,9 +32,9 @@ When updating, install the app and its bundled shell integration together. Exist
 | Ctrl+K | Toggle the description |
 | Ctrl+R | Toggle history suggestions |
 
-**Make it yours**
+**Settings**
 
-Edit `~/.jamun/settings.json`, then choose **Reload Autocomplete**:
+Edit `~/.jamun/settings.json`, then choose **Reload Autocomplete** from the menu:
 
 ```json
 {
@@ -40,19 +44,17 @@ Edit `~/.jamun/settings.json`, then choose **Reload Autocomplete**:
 }
 ```
 
-- **Enable Autocomplete** pauses or resumes Jamun.
-- **Show Diagnostics…** helps troubleshoot missing suggestions.
-- Local project specs are disabled by default. Only trust developer specs you control: they run with your account’s privileges.
-- Supported: local Terminal.app sessions. Other terminal apps and remote SSH sessions are not supported yet.
+**Good to know**
+
+- No suggestions? Choose **Show Diagnostics…** from the menu.
+- Other terminal apps work only if they expose the caret through Accessibility. Remote SSH sessions are not supported yet.
+- To uninstall, choose **Remove Shell Integration…**, quit Jamun, and delete the app.
 
 **Development**
 
 ```sh
 npm run check
 npm run build
-npm run test:package -- build/Jamun.app
 ```
 
-Setup details, release instructions, and troubleshooting: [development guide](DEVELOPING.md). See also the [protocol](PROTOCOL.md), [validation status](IMPLEMENTATION_STATUS.md), and [upstream notices](THIRD_PARTY_NOTICES.md).
-
-To uninstall, choose **Remove Shell Integration…**, quit Jamun, and delete the app. Settings and logs are retained.
+More in the [development guide](DEVELOPING.md), [protocol](PROTOCOL.md), [validation status](IMPLEMENTATION_STATUS.md), and [upstream notices](THIRD_PARTY_NOTICES.md).

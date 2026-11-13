@@ -10,6 +10,10 @@
     <string>Jamun</string>
     <key>CFBundleExecutable</key>
     <string>JamunHost</string>
+    <key>CFBundleIconFile</key>
+    <string>Jamun</string>
+    <key>CFBundleIconName</key>
+    <string>Jamun</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>

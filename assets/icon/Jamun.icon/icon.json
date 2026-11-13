@@ -1,0 +1,112 @@
+{
+  "fill" : {
+    "linear-gradient" : [
+      "srgb:0.97255,0.94902,1.00000,1.00000",
+      "srgb:0.81176,0.72549,0.95294,1.00000"
+    ]
+  },
+  "groups" : [
+    {
+      "blend-mode" : "normal",
+      "layers" : [
+        {
+          "image-name" : "chevron.svg",
+          "name" : "chevron",
+          "position" : {
+            "scale" : 1,
+            "translation-in-points" : [
+              12,
+              0
+            ]
+          }
+        }
+      ],
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.5
+      },
+      "specular" : true,
+      "translucency" : {
+        "enabled" : false,
+        "value" : 0.5
+      }
+    },
+    {
+      "blend-mode" : "normal",
+      "layers" : [
+        {
+          "image-name" : "gloss.svg",
+          "name" : "gloss",
+          "position" : {
+            "scale" : 1,
+            "translation-in-points" : [
+              -47.39696961967002,
+              25
+            ]
+          }
+        },
+        {
+          "image-name" : "fruit.svg",
+          "name" : "fruit",
+          "position" : {
+            "scale" : 1.15,
+            "translation-in-points" : [
+              2,
+              -2
+            ]
+          }
+        }
+      ],
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.6
+      },
+      "specular" : true,
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.25
+      }
+    },
+    {
+      "blend-mode" : "normal",
+      "layers" : [
+        {
+          "image-name" : "leaf.svg",
+          "name" : "leaf",
+          "position" : {
+            "scale" : 1,
+            "translation-in-points" : [
+              46.65685267409276,
+              -54.06752917064074
+            ]
+          }
+        },
+        {
+          "image-name" : "stem.svg",
+          "name" : "stem",
+          "position" : {
+            "scale" : 1,
+            "translation-in-points" : [
+              37.49524105155581,
+              -48.31580380003294
+            ]
+          }
+        }
+      ],
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.4
+      },
+      "specular" : true,
+      "translucency" : {
+        "enabled" : false,
+        "value" : 0.5
+      }
+    }
+  ],
+  "supported-platforms" : {
+    "squares" : [
+      "macOS"
+    ]
+  }
+}

@@ -5,7 +5,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BUILD_DIR="${JAMUN_BUILD_DIR:-$ROOT/build}"
 APP="$BUILD_DIR/Jamun.app"
 SPECS="$ROOT/node_modules/@withfig/autocomplete"
-for required in "$ROOT/packages/web/dist/index.html" "$SPECS/build/index.json" "$ROOT/shell/jamun.zsh"; do
+for required in "$ROOT/packages/web/dist/index.html" "$SPECS/build/index.json" "$ROOT/shell/jamun.zsh" "$ROOT/assets/icon/Jamun.icns"; do
   [[ -f "$required" ]] || { echo "Missing required resource: $required. Run npm ci and npm run build:web first." >&2; exit 1; }
 done
 [[ -d "$SPECS/icons" ]] || { echo "Missing bundled spec icons" >&2; exit 1; }
@@ -18,6 +18,17 @@ BUNDLE="$STAGING/Jamun.app"
 mkdir -p "$BUNDLE/Contents/MacOS" "$BUNDLE/Contents/Resources/shell" "$BUNDLE/Contents/Resources/licenses"
 cp "$BIN_DIR/JamunHost" "$BUNDLE/Contents/MacOS/JamunHost"
 cp "$ROOT/host/Info.plist" "$BUNDLE/Contents/Info.plist"
+cp "$ROOT/assets/icon/Jamun.icns" "$BUNDLE/Contents/Resources/Jamun.icns"
+# With Xcode, compile the Icon Composer document so macOS 26+ shows the real Liquid Glass icon.
+# Without it the committed .icns is used, which newer macOS draws on a generic plate.
+if ACTOOL="$(xcrun --find actool 2>/dev/null)"; then
+  "$ACTOOL" "$ROOT/assets/icon/Jamun.icon" --compile "$BUNDLE/Contents/Resources" --app-icon Jamun \
+    --platform macosx --minimum-deployment-target 13.0 \
+    --output-partial-info-plist "$STAGING/icon-info.plist" >/dev/null ||
+    echo "Warning: actool could not compile Jamun.icon; using the committed Jamun.icns." >&2
+else
+  echo "Note: actool not found (Xcode not selected); using the committed Jamun.icns." >&2
+fi
 cp -R "$ROOT/packages/web/dist" "$BUNDLE/Contents/Resources/web"
 cp -R "$SPECS/build" "$BUNDLE/Contents/Resources/specs"
 cp -R "$SPECS/icons" "$BUNDLE/Contents/Resources/icons"

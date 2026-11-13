@@ -6,6 +6,8 @@ final class ShellSession {
     let connection: SocketServer.Connection
     var pid: Int = 0
     var tty: String = ""
+    /// The app whose window shows this shell. Nil until known.
+    var hostPID: pid_t?
     var shellPath: String = "/bin/zsh"
     var cwd: String = ""
     var path: String = ""
@@ -27,8 +29,6 @@ final class ShellSession {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private static let terminalBundleID = "com.apple.Terminal"
-
     private let server = SocketServer()
     private var popup: PopupController!
     private var statusItem: NSStatusItem!
@@ -41,6 +41,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var activeSessionID: String?
     private var caretGeneration = 0
     private var lastCaretLog = ""
+    /// Web based terminals publish the caret later than native ones.
+    private var caretIsFromWebTerminal = false
     private var enabled = true
     private var socketReady = false
     private var pendingEdits: [String: (sessionID: String, reply: (Result<Any, BridgeError>) -> Void)] = [:]
@@ -97,15 +99,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         snapshotSignal.resume()
         self.snapshotSignal = snapshotSignal
 
-        // Debug aid: `kill -USR2 <pid>` times caret lookups against Terminal.
+        // Debug aid: `kill -USR2 <pid>` times caret lookups against the active terminal app.
         signal(SIGUSR2, SIG_IGN)
         let timingSignal = DispatchSource.makeSignalSource(signal: SIGUSR2, queue: .main)
-        timingSignal.setEventHandler {
-            guard let terminal = NSRunningApplication.runningApplications(withBundleIdentifier: Self.terminalBundleID).first else { return }
+        timingSignal.setEventHandler { [weak self] in
+            guard let host = self?.activeSession?.hostPID else { return }
             var samples: [Double] = []
             for _ in 0..<10 {
                 let start = CFAbsoluteTimeGetCurrent()
-                _ = CaretTracker.caret(pid: terminal.processIdentifier, trailingSpaces: 1)
+                _ = CaretTracker.caret(pid: host, trailingSpaces: 1)
                 samples.append((CFAbsoluteTimeGetCurrent() - start) * 1000)
             }
             Log.write("caret lookup ms: " + samples.map { String(format: "%.1f", $0) }.joined(separator: " "))
@@ -222,16 +224,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             "Shell integration: \(ShellIntegration.installed ? "installed" : "not installed")",
             "Accessibility: \(CaretTracker.isTrusted(prompt: false) ? "granted" : "not granted")",
             "Bundled resources: \(resourcesOK ? "available" : "missing — rebuild/reinstall the app")",
-            "Popup: \(popup.health)", "Supported terminal: Terminal.app with zsh",
-            "Frontmost terminal: \(terminalIsFrontmost ? "supported" : "switch to Terminal.app")",
+            "Popup: \(popup.health)", "Supported: zsh in Terminal.app, VS Code style terminals, and other apps that expose the caret",
+            "Active shell's app: \(activeHostName)",
+            "Frontmost app: \(terminalIsFrontmost ? "hosts the active shell" : "does not host the active shell (type in a terminal first)")",
             Diagnostics.summary(),
         ].filter { !$0.isEmpty }.joined(separator: "\n"))
     }
 
     // MARK: visibility
 
+    /// True when the frontmost app is the one showing the active shell.
     private var terminalIsFrontmost: Bool {
-        NSWorkspace.shared.frontmostApplication?.bundleIdentifier == Self.terminalBundleID
+        guard let host = activeSession?.hostPID,
+              let app = NSWorkspace.shared.frontmostApplication else { return false }
+        return app.processIdentifier == host
+    }
+
+    private var activeHostName: String {
+        guard let host = activeSession?.hostPID else { return "unknown" }
+        let app = NSRunningApplication(processIdentifier: host)
+        return app?.localizedName ?? app?.bundleIdentifier ?? "pid \(host)"
+    }
+
+    /// Prefer the app found above the shell in the process tree. When there
+    /// is none (tmux), the user is typing, so the frontmost app is the host.
+    private func resolveHost(for session: ShellSession) {
+        if let host = session.hostPID, NSRunningApplication(processIdentifier: host) != nil { return }
+        if let app = ProcessTree.hostApp(ofShell: pid_t(session.pid)) {
+            session.hostPID = app.processIdentifier
+        } else if let app = NSWorkspace.shared.frontmostApplication,
+                  app.processIdentifier != ProcessInfo.processInfo.processIdentifier {
+            session.hostPID = app.processIdentifier
+        } else {
+            session.hostPID = nil
+        }
+        Log.write("shell \(session.id) is hosted by \(session.hostPID.map { NSRunningApplication(processIdentifier: $0)?.bundleIdentifier ?? "pid \($0)" } ?? "unknown")")
     }
 
     @objc private func frontmostAppChanged() {
@@ -241,12 +268,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func watchTerminal() {
-        if let app = NSWorkspace.shared.frontmostApplication, app.bundleIdentifier == Self.terminalBundleID {
-            terminalWatcher.attach(to: app.processIdentifier)
+        if terminalIsFrontmost, let host = activeSession?.hostPID {
+            terminalWatcher.attach(to: host)
         }
     }
 
-    /// Another Terminal window or tab took focus, or the window moved. The
+    /// Another terminal window or tab took focus, or the window moved. The
     /// caret we know about is stale, so hide until the shell reports typing.
     private func terminalFocusChanged() {
         caretGeneration += 1
@@ -264,7 +291,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func refreshCaret() {
         caretGeneration += 1
         let generation = caretGeneration
-        for delay in [0.012, 0.07] {
+        let delays = caretIsFromWebTerminal ? [0.012, 0.07, 0.2, 0.4] : [0.012, 0.07]
+        for delay in delays {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
                 guard let self, generation == self.caretGeneration else { return }
                 self.readCaret()
@@ -273,9 +301,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func readCaret() {
-        guard let app = NSWorkspace.shared.frontmostApplication,
-              app.bundleIdentifier == Self.terminalBundleID
-        else { return }
+        guard terminalIsFrontmost, let host = activeSession?.hostPID else { return }
 
         var trailingSpaces: Int?
         if let session = activeSession {
@@ -289,8 +315,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let lookupStarted = ProcessInfo.processInfo.systemUptime
         defer { Diagnostics.record("caret_ms", value: (ProcessInfo.processInfo.systemUptime - lookupStarted) * 1000) }
-        switch CaretTracker.caret(pid: app.processIdentifier, trailingSpaces: trailingSpaces) {
+        switch CaretTracker.caret(pid: host, trailingSpaces: trailingSpaces) {
         case .success(let caret):
+            caretIsFromWebTerminal = caret.strategy == "xterm-textarea"
             popup.setCaret(caret.rect)
         case .failure(let error):
             let line = "caret unavailable: \(error)"
@@ -345,6 +372,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 ProcessRunner.cancelSession(previous.id)
             }
             activeSessionID = id
+            resolveHost(for: session)
             updateAllowed()
             watchTerminal()
             emitEditBuffer(session)

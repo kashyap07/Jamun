@@ -11,7 +11,7 @@ python3 - "$TEMP_DIR/Jamun.app" <<'PY'
 from pathlib import Path
 import sys
 app = Path(sys.argv[1])
-required = ["Contents/MacOS/JamunHost", "Contents/Resources/web/index.html", "Contents/Resources/specs/index.json", "Contents/Resources/shell/jamun.zsh", "Contents/Resources/licenses/THIRD_PARTY_NOTICES.md"]
+required = ["Contents/MacOS/JamunHost", "Contents/Resources/web/index.html", "Contents/Resources/specs/index.json", "Contents/Resources/shell/jamun.zsh", "Contents/Resources/Jamun.icns", "Contents/Resources/licenses/THIRD_PARTY_NOTICES.md"]
 for name in required:
     assert (app / name).is_file() and (app / name).stat().st_size > 0, name
 assert any((app / "Contents/Resources/icons").iterdir())

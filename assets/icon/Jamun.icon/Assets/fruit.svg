@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <radialGradient id="skin" cx="0.3" cy="0.3" r="0.85">
+      <stop offset="0" stop-color="#7653BC"/>
+      <stop offset="0.45" stop-color="#412670"/>
+      <stop offset="1" stop-color="#1D1039"/>
+    </radialGradient>
+  </defs>
+  <g transform="translate(500 565) rotate(45)">
+    <path d="M0 -310 C 150 -310 200 -190 200 20 C 200 215 160 310 0 310 C -160 310 -200 215 -200 20 C -200 -190 -150 -310 0 -310 Z" fill="url(#skin)"/>
+  </g>
+</svg>
