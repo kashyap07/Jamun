@@ -57,4 +57,8 @@ npm run check
 npm run build
 ```
 
-More in the [development guide](DEVELOPING.md), [protocol](PROTOCOL.md), [validation status](IMPLEMENTATION_STATUS.md), and [upstream notices](THIRD_PARTY_NOTICES.md).
+More in the [development guide](DEVELOPING.md), [protocol](PROTOCOL.md), and [validation status](IMPLEMENTATION_STATUS.md).
+
+**License**
+
+[MIT](LICENSE). Includes code from the Fig autocomplete engine and other projects under their own licenses: see the [upstream notices](THIRD_PARTY_NOTICES.md).

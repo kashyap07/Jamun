@@ -36,6 +36,7 @@ cp "$ROOT/shell/jamun.zsh" "$BUNDLE/Contents/Resources/shell/jamun.zsh"
 cp "$ROOT/packages/LICENSE.fig.APACHE" "$ROOT/packages/LICENSE.fig.MIT" "$BUNDLE/Contents/Resources/licenses/"
 cp "$ROOT/packages/fuzzysort/LICENSE" "$BUNDLE/Contents/Resources/licenses/fuzzysort.LICENSE"
 cp "$ROOT/THIRD_PARTY_NOTICES.md" "$BUNDLE/Contents/Resources/licenses/"
+cp "$ROOT/LICENSE" "$BUNDLE/Contents/Resources/licenses/LICENSE"
 # Include the actual license distributed with the locked spec package.
 for license in "$SPECS"/LICENSE*; do
   if [[ -f "$license" ]]; then cp "$license" "$BUNDLE/Contents/Resources/licenses/specs-$(basename "$license")"; fi

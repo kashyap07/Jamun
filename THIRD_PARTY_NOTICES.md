@@ -1,4 +1,4 @@
-Jamun includes code adapted from the Fig/Amazon autocomplete engine and uses the published `@withfig/autocomplete` specification package.
+Jamun itself is released under the MIT license in `LICENSE`. It includes code adapted from the Fig/Amazon autocomplete engine and uses the published `@withfig/autocomplete` specification package.
 
 | Component | Provenance | Notices |
 |---|---|---|
