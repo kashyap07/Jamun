@@ -26,3 +26,9 @@ export async function destinationOfSymbolicLink(path: string) {
 export async function createDirectory(path: string, recursive: boolean) {
   await request("fs.mkdir", { path, recursive });
 }
+
+/** Native policy permits only the explicitly selected developer spec directory. */
+export async function readSpec(path: string): Promise<string> {
+  const result = await request<{ contents: string }>("spec.read", { path });
+  return result.contents;
+}

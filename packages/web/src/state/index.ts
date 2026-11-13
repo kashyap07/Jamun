@@ -309,7 +309,7 @@ export const useAutocompleteStore = createWithEqualityFn<AutocompleteState>(
               ["currentArg", "completionObj"],
             );
 
-            console.log(parserResult);
+
 
             const newGeneratorStates =
               generatorState.triggerGenerators(parserResult);
@@ -400,7 +400,7 @@ export const useAutocompleteStore = createWithEqualityFn<AutocompleteState>(
             return {
               selectedIndex,
               visibleState,
-              hasChangedIndex: selectedIndex !== state.selectedIndex,
+              hasChangedIndex: state.hasChangedIndex || selectedIndex !== state.selectedIndex,
             };
           }),
 
@@ -443,7 +443,6 @@ export const useAutocompleteStore = createWithEqualityFn<AutocompleteState>(
               cwd,
               buffer,
               cursorLocation,
-              aliases,
               shellContext,
             } = figState;
 
@@ -461,7 +460,9 @@ export const useAutocompleteStore = createWithEqualityFn<AutocompleteState>(
                 );
               }
 
-              if (shellContext.alias) {
+              if (shellContext.aliases) {
+                figState.aliases = shellContext.aliases;
+              } else if (shellContext.alias) {
                 figState.aliases = getAliasMemoized(
                   shellContext.alias,
                   shellContext.shellPath,
@@ -493,7 +494,7 @@ export const useAutocompleteStore = createWithEqualityFn<AutocompleteState>(
             try {
               const command = getCommandMemoized(
                 bufferSliced,
-                aliases,
+                figState.aliases,
                 cursorLocation,
               );
               return { figState, command };

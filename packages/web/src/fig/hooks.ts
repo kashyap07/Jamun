@@ -23,6 +23,7 @@ type Subscription = Unwrap<
 >;
 
 export type FigState = {
+  receivedAt?: number;
   buffer: string;
   cursorLocation: number;
   cwd: string | null;
@@ -72,7 +73,7 @@ export const useFigSettings = (
       setSettings(settings);
       updateSettings(settings as SettingsMap);
       updateSelectSuggestionKeybindings(settings as SettingsMap);
-    });
+    }).catch(() => { /* Native diagnostics expose initialization failures. */ });
   }, []);
 
   useFigSubscriptionEffect(
@@ -111,9 +112,11 @@ export const useFigAutocomplete = (
         setFigState((figState) => ({
           ...figState,
           buffer,
+          receivedAt: performance.now(),
           cursorLocation,
           cwd,
           shellContext,
+          processUserIsIn: shellContext?.shellPath ?? shellContext?.processName ?? null,
         }));
         return { unsubscribe: false };
       }),

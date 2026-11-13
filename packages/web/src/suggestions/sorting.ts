@@ -9,12 +9,29 @@ import {
 // e.g. git: { add: 2, push: 4 }
 type Index = Record<string, Record<string, number>>;
 
-const frequencyIndex: Index = JSON.parse(
-  localStorage.getItem("term_frequency_index_fig_only") || "{}",
-);
-const recencyIndex: Index = JSON.parse(
-  localStorage.getItem("term_frequency_index_fig_only_recency") || "{}",
-);
+const readIndex = (key: string): Index => {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw || raw.length > 1_000_000) return Object.create(null);
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return Object.create(null);
+    const index: Index = Object.create(null);
+    for (const [command, values] of Object.entries(parsed).slice(-100)) {
+      if (!values || typeof values !== "object") continue;
+      index[command] = Object.assign(Object.create(null), Object.fromEntries(Object.entries(values).filter(([, value]) => typeof value === "number" && Number.isFinite(value)).slice(-200)));
+    }
+    return index;
+  } catch { return Object.create(null); }
+};
+const frequencyIndex = readIndex("term_frequency_index_fig_only");
+const recencyIndex = readIndex("term_frequency_index_fig_only_recency");
+const boundIndex = (index: Index) => {
+  for (const key of Object.keys(index).slice(0, -100)) delete index[key];
+  for (const key of Object.keys(index)) {
+    const values = Object.entries(index[key]).slice(-200);
+    index[key] = Object.assign(Object.create(null), Object.fromEntries(values));
+  }
+};
 
 // This function is called every time a user does an autocomplete command
 export const updateAutocompleteIndexFromUserInsert = (
@@ -36,17 +53,11 @@ export const updateAutocompleteIndexFromUserInsert = (
     [param]: Date.now(),
   };
 
-  // Update frequency index
-  localStorage.setItem(
-    "term_frequency_index_fig_only",
-    JSON.stringify(frequencyIndex),
-  );
-
-  // Update recency index
-  localStorage.setItem(
-    "term_frequency_index_fig_only_recency",
-    JSON.stringify(recencyIndex),
-  );
+  boundIndex(frequencyIndex); boundIndex(recencyIndex);
+  try {
+    localStorage.setItem("term_frequency_index_fig_only", JSON.stringify(frequencyIndex));
+    localStorage.setItem("term_frequency_index_fig_only_recency", JSON.stringify(recencyIndex));
+  } catch { /* Quota/storage failures must never interrupt a shell edit. */ }
 };
 
 export const updatePriorities = (suggestions: Suggestion[], cmd: string) => {

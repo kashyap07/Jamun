@@ -1,9 +1,7 @@
 import logger from "loglevel";
 import { StoreApi } from "zustand";
 import { Shell } from "@jamun/api-bindings";
-import { SpecLocationSource } from "@fig/autocomplete-shared";
 import {
-  SpecLocation,
   Suggestion,
 } from "@jamun/shared/internal";
 import {
@@ -21,145 +19,63 @@ import {
 } from "../suggestions/helpers";
 import { updateAutocompleteIndexFromUserInsert } from "../suggestions/sorting";
 import { InsertPrefixError } from "./errors";
-
-const sendTextToTerminal = (
-  state: AutocompleteState,
-  item: Suggestion,
-  text: string,
-  isFullCompletion: boolean,
-  rootCommand: string,
-) => {
-  const {
-    parserResult: { searchTerm },
-    figState: { buffer },
-  } = state;
-  const queryTerm = getQueryTermForSuggestion(item, searchTerm);
-  // See if we need to move the cursor
-  let valToInsert = text;
-  const cursorIdx = valToInsert.indexOf("{cursor}");
-  let moveCursor = "";
-  if (cursorIdx > -1) {
-    valToInsert = valToInsert.replace(/{cursor}/, "");
-    moveCursor = "\x1b[D".repeat(valToInsert.length - cursorIdx);
-  }
-
-  // Get the number of characters the user has already input so we can delete them
-  let numCharsToDelete = 0;
-
-  if (
-    (item.type !== "auto-execute" && item.type !== "special") ||
-    !isFullCompletion
-  ) {
-    // This assumes any search term that uses a space was done so by escaping
-    // the space with a backslash.
-    // A better solution is to map the search term to the actual user input string...
-    numCharsToDelete = queryTerm.replace(/\s/, "\\ ").length;
-  }
-
-  if (item.type === "shortcut" && searchTerm.startsWith("?")) {
-    numCharsToDelete += 1;
-  }
-
-  if (rootCommand === "?") {
-    numCharsToDelete += 2;
-  }
-
-  // Don't delete characters if we don't have to
-  if (
-    valToInsert.startsWith(queryTerm) &&
-    numCharsToDelete >= queryTerm.length
-  ) {
-    numCharsToDelete -= queryTerm.length;
-    valToInsert = valToInsert.slice(queryTerm.length);
-  }
-
-  const finalStringToInsert =
-    "\b".repeat(numCharsToDelete) + valToInsert + moveCursor;
-
-  logger.info(`inserting: ${finalStringToInsert}`);
-
-  Shell.insert(
-    finalStringToInsert,
-    { insertionBuffer: buffer },
-    state.figState.shellContext?.sessionId,
-  );
-  return {
-    insertedChars: valToInsert.length,
-    insertedCharsFull: finalStringToInsert.length,
-  };
-};
+import { literalReplacement, replacementSpan, scalarLength } from "./literalEdit";
 
 const insertString = (
   state: AutocompleteState,
   item: Suggestion,
   text: string,
   isFullCompletion: boolean,
+  execute = false,
 ) => {
-  const { command, updateVisibilityPostInsert, parserResult } = state;
-  const { commandIndex, annotations } = parserResult;
-  const rootCommand = command?.tokens[commandIndex]?.text || "";
-
-  const inserted = sendTextToTerminal(
-    state,
-    item,
-    text,
-    isFullCompletion,
-    rootCommand,
-  );
-
-  let specLocation: { location: SpecLocation; name: string } | undefined;
-  annotations.forEach((annotation) => {
-    if ("specLocation" in annotation) {
-      const { specLocation: location, spec } = annotation;
-      specLocation = {
-        location,
-        name: spec.name[0],
-      };
+  const { buffer, cursorLocation, shellContext } = state.figState;
+  if (!shellContext?.sessionId || shellContext.revision === undefined) throw new InsertPrefixError("No active shell snapshot");
+  const query = getQueryTermForSuggestion(item, state.parserResult.searchTerm);
+  const token = state.command?.tokens.at(-1);
+  const raw = buffer.slice(token?.originalNode.startIndex ?? cursorLocation, cursorLocation);
+  const isFile = item.type === "file" || item.type === "folder";
+  const isTemplate = isFullCompletion && Boolean(item.insertValue) && !isFile;
+  const autoExecute = isFullCompletion && item.type === "auto-execute";
+  let deletion = 0;
+  let insertion = text;
+  let moveLeft = 0;
+  if (autoExecute) {
+    insertion = "";
+  } else if (isTemplate) {
+    const span = replacementSpan(raw, query);
+    deletion = scalarLength(raw.slice(span.start));
+    // Raw templates must replace an entire quoted token, not nest their syntax in a quote.
+    if (span.quote) {
+      if (raw[0] !== span.quote || span.start !== 1) throw new InsertPrefixError("Cannot insert a template inside a partially quoted token");
+      deletion = scalarLength(raw);
     }
+    const marker = insertion.indexOf("{cursor}");
+    if (marker !== -1) {
+      moveLeft = scalarLength(insertion.slice(marker + "{cursor}".length));
+      insertion = insertion.slice(0, marker) + insertion.slice(marker + "{cursor}".length);
+    }
+    // Templates may describe multiple tokens, but cannot smuggle terminal controls/execution.
+    if (/[\x00-\x1f\x7f]/.test(insertion)) throw new InsertPrefixError("Control characters are not allowed in completion templates");
+  } else {
+    ({ deletion, insertion } = literalReplacement(raw, query, text, isFile));
+  }
+  if (!autoExecute && isFullCompletion && item.shouldAddSpace &&
+      (state.settings[SETTINGS.INSERT_SPACE_AUTOMATICALLY] ?? true)) insertion += " ";
+  const rootCommand = state.command?.tokens[state.parserResult.commandIndex]?.text ?? "";
+  if (item.type === "shortcut" || rootCommand === "?") {
+    deletion = scalarLength(buffer.slice(state.command?.originalTree.startIndex ?? 0, cursorLocation));
+  }
+  return Shell.insert({
+      insertion, deletion, moveLeft, immediate: execute || autoExecute,
+      expectedBuffer: buffer, expectedCursor: scalarLength(buffer.slice(0, cursorLocation)),
+      revision: shellContext.revision, sessionId: shellContext.sessionId,
+    }).then(() => {
+    if (isFullCompletion) updateAutocompleteIndexFromUserInsert(rootCommand, makeArray(item.name)[0] ?? "");
+    trackEvent("autocomplete-insert", { insertionLength: scalarLength(insertion), suggestion_type: item.type ?? null });
+    state.updateVisibilityPostInsert(item, isFullCompletion);
+  }).catch(() => {
+    logger.warn("Completion was rejected or expired; waiting for the next edit");
   });
-
-  if (isFullCompletion) {
-    const suggestionName = makeArray(item.name)[0] || "";
-    updateAutocompleteIndexFromUserInsert(rootCommand, suggestionName);
-  }
-
-  const metadata: Record<string, string | boolean> | null = specLocation
-    ? {
-        specName: specLocation.name,
-        specLocation: specLocation.location.name,
-        specLocationType: specLocation.location.type,
-        spec_is_script: specLocation.location.type === SpecLocationSource.LOCAL,
-      }
-    : null;
-
-  trackEvent("autocomplete-insert", {
-    ...metadata,
-    rootCommand,
-    suggestion_type: item.type ?? null,
-    insertionLength: `${inserted.insertedChars}`,
-    // Includes backspaces and cursor adjustments.
-    insertionLengthFull: `${inserted.insertedCharsFull}`,
-    app: fig.constants?.version || "",
-    terminal: state.figState.shellContext?.terminal ?? null,
-    shell: state.figState.shellContext?.shellPath?.split("/")?.at(-1) ?? null,
-  });
-
-  logger.info("Inserted string, updating visibility");
-  updateVisibilityPostInsert(item, isFullCompletion);
-};
-
-const escapeInsertion = (str: string, isFolder: boolean) => {
-  // Check if insertion character has any special chars
-  // TODO: ultimately replace this with a regex
-  const specialCharsNotSpace = "\\?*'\"#|<>()[]!&".split("");
-  if (specialCharsNotSpace.every((char) => !str.includes(char))) {
-    return !str.includes(" ") ? str : `${str.replace(/\s/g, "\\ ")}`;
-  }
-
-  if (isFolder) {
-    return `'${str.slice(0, -1).replace(/'/g, "'\"'\"'")}'/`;
-  }
-  return `'${str.replace(/'/g, "'\"'\"'")}'`;
 };
 
 const getFullInsertion = (
@@ -183,11 +99,8 @@ const getFullInsertion = (
     fuzzySearch,
     preferVerboseSuggestions,
   );
-  if (!match) return escapeInsertion("", isFolder);
-  return escapeInsertion(
-    item.separatorToAdd ? `${match}${item.separatorToAdd}{cursor}` : match,
-    isFolder,
-  );
+  if (!match) throw new InsertPrefixError("Suggestion no longer matches");
+  return item.separatorToAdd ? `${match}${item.separatorToAdd}` : match;
 };
 
 const makeInsertTextForItem =
@@ -199,28 +112,14 @@ const makeInsertTextForItem =
       fuzzySearchEnabled,
       settings,
     } = state;
-    let text = getFullInsertion(
+    const text = getFullInsertion(
       item,
       searchTerm,
       fuzzySearchEnabled,
       settings[SETTINGS.PREFER_VERBOSE_SUGGESTIONS] as boolean,
     );
 
-    if (execute && item.type !== "auto-execute") {
-      text += "\n";
-    }
-    // Replace multiple newlines at the end of string with just one.
-    text = text.replace(/\n+$/g, "\n");
-
-    if (
-      !text.endsWith("\n") &&
-      item.shouldAddSpace &&
-      (settings[SETTINGS.INSERT_SPACE_AUTOMATICALLY] ?? true)
-    ) {
-      text += " ";
-    }
-
-    return insertString(state, item, text, true);
+    return insertString(state, item, text, true, execute).catch(() => logger.warn("Unable to safely insert this suggestion"));
   };
 
 const makeInsertCommonPrefix =
@@ -285,7 +184,7 @@ const makeInsertCommonPrefix =
     if (!sharedPrefix || sharedPrefix === queryTerm) {
       throw new InsertPrefixError("No remaining prefix to insert");
     }
-    const text = sharedPrefix.replace(/\s/g, "\\ ");
+    const text = sharedPrefix;
     if (
       text ===
       getFullInsertion(
@@ -300,7 +199,7 @@ const makeInsertCommonPrefix =
       }
       return insertTextForItem(selectedItem);
     }
-    return insertString(state, selectedItem, text, false);
+    return insertString(state, selectedItem, text, false).catch(() => logger.warn("Unable to safely insert this prefix"));
   };
 
 export const createInsertionState = (

@@ -1,6 +1,6 @@
 import logger from "loglevel";
 
-import { executeCommand } from "@jamun/api-bindings-wrappers";
+import { executeCommandTimeout } from "@jamun/api-bindings-wrappers";
 import { runPipingConsoleMethods } from "../utils";
 import {
   runCachedGenerator,
@@ -36,7 +36,7 @@ export async function getCustomSuggestions(
       context,
       () =>
         runPipingConsoleMethods(() =>
-          generator.custom!(tokenArray, executeCommand, {
+          generator.custom!(tokenArray, (input) => executeCommandTimeout(input, undefined, context.sessionId), {
             currentWorkingDirectory,
             currentProcess,
             sshPrefix: "",

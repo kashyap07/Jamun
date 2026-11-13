@@ -20,6 +20,12 @@ final class PopupController: NSObject, WKScriptMessageHandler, WKNavigationDeleg
     /// when `id` is non-zero.
     var onRequest: ((_ method: String, _ params: [String: Any], _ reply: @escaping (Result<Any, BridgeError>) -> Void) -> Void)?
 
+    var onUnavailable: (() -> Void)?
+    private(set) var isReady = false
+    private(set) var health = "Loading"
+    private var generation = UUID().uuidString
+    func markReady() { isReady = true; health = "Ready" }
+
     private let panel: PopupPanel
     private let webView: WKWebView
     private let gap: CGFloat = 3
@@ -71,7 +77,7 @@ final class PopupController: NSObject, WKScriptMessageHandler, WKNavigationDeleg
         webView.setValue(false, forKey: "drawsBackground")
         webView.autoresizingMask = [.width, .height]
         if #available(macOS 13.3, *) {
-            webView.isInspectable = true
+            webView.isInspectable = Log.verbose
         }
         panel.contentView = Self.makeBackground(containing: webView)
     }
@@ -79,7 +85,7 @@ final class PopupController: NSObject, WKScriptMessageHandler, WKNavigationDeleg
     /// Liquid Glass on macOS 26 and later, a blurred material before that.
     private static func makeBackground(containing content: NSView) -> NSView {
         let radius: CGFloat = 12
-        if #available(macOS 26.0, *) {
+        if #available(macOS 26.0, *), !NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency {
             let glass = NSGlassEffectView(frame: content.frame)
             // "jamun.glass" in settings.json: "clear" (default) or "regular".
             let style = Settings.all()["jamun.glass"] as? String ?? "clear"
@@ -99,6 +105,11 @@ final class PopupController: NSObject, WKScriptMessageHandler, WKNavigationDeleg
         let material = NSVisualEffectView(frame: content.frame)
         material.material = .popover
         material.blendingMode = .behindWindow
+        if NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency {
+            material.blendingMode = .withinWindow
+            material.wantsLayer = true
+            material.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+        }
         material.state = .active
         material.wantsLayer = true
         material.layer?.cornerRadius = radius
@@ -125,6 +136,8 @@ final class PopupController: NSObject, WKScriptMessageHandler, WKNavigationDeleg
     }
 
     func load() {
+        isReady = false; health = "Loading"; requestedSize = .zero; apply()
+        onUnavailable?()
         guard let url = URL(string: "jamun://app/index.html") else { return }
         webView.load(URLRequest(url: url))
     }
@@ -151,7 +164,7 @@ final class PopupController: NSObject, WKScriptMessageHandler, WKNavigationDeleg
           const send = (level, args) => {
             try {
               window.webkit.messageHandlers.jamun.postMessage({
-                id: 0, method: "log", params: { level, message: args.map(text).join(" ") },
+                id: 0, protocol: 2, method: "log", params: { level, message: args.map(text).join(" ") },
               });
             } catch (e) {}
           };
@@ -169,6 +182,7 @@ final class PopupController: NSObject, WKScriptMessageHandler, WKNavigationDeleg
     // MARK: host -> web
 
     func emit(event: String, payload: [String: Any]) {
+        guard isReady else { return }
         send(["event": event, "payload": payload])
     }
 
@@ -182,13 +196,20 @@ final class PopupController: NSObject, WKScriptMessageHandler, WKNavigationDeleg
     // MARK: web -> host
 
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
-        guard let body = message.body as? [String: Any],
+        guard message.frameInfo.isMainFrame,
+              message.frameInfo.request.url?.scheme == "jamun",
+              message.frameInfo.request.url?.host == "app",
+              let body = message.body as? [String: Any],
+              body["protocol"] as? Int == 2,
               let method = body["method"] as? String
         else { return }
         let id = (body["id"] as? NSNumber)?.intValue ?? 0
-        let params = body["params"] as? [String: Any] ?? [:]
+        var params = body["params"] as? [String: Any] ?? [:]
+        let requestGeneration = generation
+        params["_processId"] = "\(generation):\(id)"
+        params["_generation"] = generation
         onRequest?(method, params) { [weak self] result in
-            guard id != 0 else { return }
+            guard id != 0, self?.generation == requestGeneration else { return }
             switch result {
             case .success(let value):
                 self?.send(["id": id, "ok": true, "result": value])
@@ -198,15 +219,33 @@ final class PopupController: NSObject, WKScriptMessageHandler, WKNavigationDeleg
         }
     }
 
+    func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        let url = navigationAction.request.url
+        let allowed = navigationAction.targetFrame?.isMainFrame == true && url?.scheme == "jamun" && url?.host == "app" && ["/", "/index.html"].contains(url?.path ?? "")
+        decisionHandler(allowed ? .allow : .cancel)
+    }
+
+    func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+        generation = UUID().uuidString; isReady = false; health = "Loading"
+        requestedSize = .zero; apply(); onUnavailable?()
+        let loadingGeneration = generation
+        DispatchQueue.main.asyncAfter(deadline: .now() + 10) { [weak self] in
+            guard let self, self.generation == loadingGeneration, !self.isReady else { return }
+            self.health = "Initialization failed — reload autocomplete"; self.onUnavailable?()
+        }
+    }
+
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         Log.write("web app loaded")
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        isReady = false; health = "Load failed"; onUnavailable?()
         Log.write("web app failed to load: \(error.localizedDescription)")
     }
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        isReady = false; health = "Load failed"; onUnavailable?()
         Log.write("web app failed to load: \(error.localizedDescription)")
     }
 
@@ -230,6 +269,8 @@ final class PopupController: NSObject, WKScriptMessageHandler, WKNavigationDeleg
     /// The web app asks for a frame. With `dryrun` nothing moves, the caller
     /// only learns where the popup would land.
     func position(width: CGFloat, height: CGFloat, anchorX: CGFloat, dryrun: Bool) -> Placement {
+        guard width.isFinite, height.isFinite, anchorX.isFinite,
+              width > 0, height > 0, width <= 16384, height <= 16384, abs(anchorX) <= 16384 else { return Placement(isAbove: false, isClipped: true) }
         let size = NSSize(width: width, height: height)
         if !dryrun {
             requestedSize = size
@@ -248,6 +289,7 @@ final class PopupController: NSObject, WKScriptMessageHandler, WKNavigationDeleg
         let probe = NSPoint(x: caret.midX, y: (caretTop + caretBottom) / 2)
         let screen = NSScreen.screens.first { $0.frame.contains(probe) } ?? primary
         let visible = screen.visibleFrame
+        let size = NSSize(width: min(size.width, visible.width), height: min(size.height, visible.height))
 
         var origin = NSPoint(x: caret.minX + anchorX, y: caretBottom - gap - size.height)
         var isAbove = false
@@ -255,7 +297,8 @@ final class PopupController: NSObject, WKScriptMessageHandler, WKNavigationDeleg
             origin.y = caretTop + gap
             isAbove = true
         }
-        let isClipped = origin.x + size.width > visible.maxX
+        let isClipped = origin.x + size.width > visible.maxX || origin.x < visible.minX
+        origin.y = max(visible.minY, min(origin.y, visible.maxY - size.height))
         origin.x = max(visible.minX, min(origin.x, visible.maxX - size.width))
         return (NSRect(origin: origin, size: size), Placement(isAbove: isAbove, isClipped: isClipped))
     }

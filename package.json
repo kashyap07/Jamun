@@ -10,10 +10,21 @@
     "build:host": "./scripts/build-host.sh",
     "build": "npm run build:web && npm run build:host",
     "typecheck": "npm run typecheck -w @jamun/web",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:shell": "python3 scripts/tests/shell_protocol.py",
+    "test:native": "./scripts/test-native.sh",
+    "test:webkit": "./scripts/test-webkit.sh",
+    "check": "npm test && npm run typecheck && npm run test:shell && npm run test:native",
+    "test:package": "./scripts/test-package.sh"
   },
   "devDependencies": {
     "@withfig/autocomplete": "2.692.3",
-    "jsdom": "^29.1.1"
+    "jsdom": "^29.1.1",
+    "vitest": "4.1.12",
+    "vite": "6.4.6"
+  },
+  "engines": {
+    "node": ">=22.16.0",
+    "npm": ">=10"
   }
 }

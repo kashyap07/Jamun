@@ -2,7 +2,7 @@ import { useEffect, useCallback, useRef, useMemo } from "react";
 import { Suggestion, Arg } from "@jamun/shared/internal";
 import { getMaxHeight, POPOUT_WIDTH } from "../window";
 import { useAutocompleteStore } from "../state";
-import { AutocompleteAction } from "../actions";
+import { AutocompleteAction, getActionKeybindings } from "../actions";
 
 export type DescriptionPosition = "unknown" | "left" | "right";
 
@@ -27,22 +27,7 @@ const Description = ({
   const { settings } = useAutocompleteStore();
 
   const hint = useMemo(() => {
-    const keys = Object.entries(settings).reduce((acc, pair) => {
-      const [key, value] = pair;
-
-      switch (value) {
-        case AutocompleteAction.TOGGLE_DESCRIPTION:
-        case AutocompleteAction.SHOW_DESCRIPTION:
-        case AutocompleteAction.HIDE_DESCRIPTION:
-          acc.push(key);
-          break;
-        default:
-          break;
-      }
-
-      return acc;
-    }, [] as string[]);
-
+    const keys = getActionKeybindings(settings, AutocompleteAction.TOGGLE_DESCRIPTION);
     return (
       keys
         .map((key) =>
@@ -69,7 +54,7 @@ const Description = ({
             })
             .join(""),
         )
-        .shift() ?? "⌃k"
+        .shift() ?? ""
     );
   }, [settings]);
 

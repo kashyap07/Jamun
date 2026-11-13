@@ -7,10 +7,9 @@ import {
 } from "@jamun/shared/utils";
 import {
   executeCommand,
-  fread,
   isInDevMode,
 } from "@jamun/api-bindings-wrappers";
-import z from "zod";
+import { fs as FileSystem } from "@jamun/api-bindings";
 import { MOST_USED_SPECS } from "./constants.js";
 import { LoadLocalSpecError, SpecCDNError } from "./errors.js";
 
@@ -33,19 +32,20 @@ const cdnUrlFactory = makeCdnUrlFactory(
   "https://specs.q.us-east-1.amazonaws.com/",
 );
 
-const stringImportCache = new Map<string, unknown>();
+const stringImportCache = new Map<string, SpecFileImport>();
 
 export const importString = async (str: string) => {
   if (stringImportCache.has(str)) {
-    return stringImportCache.get(str);
+    return stringImportCache.get(str)!;
   }
-  const result = await import(
-    /* @vite-ignore */
-    URL.createObjectURL(new Blob([str], { type: "text/javascript" }))
-  );
-
-  stringImportCache.set(str, result);
-  return result;
+  if (str.length > 2_000_000) throw new LoadLocalSpecError("Spec exceeds the size limit");
+  const url = URL.createObjectURL(new Blob([str], { type: "text/javascript" }));
+  try {
+    const result = await import(/* @vite-ignore */ url);
+    if (stringImportCache.size >= 128) stringImportCache.delete(stringImportCache.keys().next().value!);
+    stringImportCache.set(str, result);
+    return result;
+  } finally { URL.revokeObjectURL(url); }
 };
 
 /*
@@ -59,7 +59,7 @@ export async function importSpecFromFile(
 ): Promise<SpecFileImport> {
   const importFromPath = async (fullPath: string) => {
     localLogger.info(`Loading spec from ${fullPath}`);
-    const contents = await fread(fullPath);
+    const contents = await FileSystem.readSpec(fullPath);
     if (!contents) {
       throw new LoadLocalSpecError(`Failed to read file: ${fullPath}`);
     }
@@ -118,7 +118,18 @@ export async function importFromPublicCDN<T = SpecFileImport>(
 
 async function jsonFromPublicCDN(path: string): Promise<unknown> {
   if (canLoadSpecProtocol()) {
-    return fetch(`spec://localhost/${path}.json`).then((res) => res.json());
+    return fetch(`spec://localhost/${path}.json`).then(async (res) => {
+      if (!res.ok) throw new Error("Spec index unavailable");
+      const reader = res.body?.getReader();
+      if (!reader) throw new Error("Spec index stream unavailable");
+      const chunks: Uint8Array[] = []; let size = 0;
+      try {
+        while (true) { const next = await reader.read(); if (next.done) break; size += next.value.length; if (size > 2_000_000) throw new Error("Spec index too large"); chunks.push(next.value); }
+      } finally { await reader.cancel(); }
+      const bytes = new Uint8Array(size); let offset = 0;
+      for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; }
+      return JSON.parse(new TextDecoder().decode(bytes));
+    });
   }
 
   return exponentialBackoff(
@@ -128,7 +139,18 @@ async function jsonFromPublicCDN(path: string): Promise<unknown> {
       maxRetries: 5,
       jitter: 100,
     },
-    () => fetch(cdnUrlFactory(path, "json")).then((res) => res.json()),
+    () => fetch(cdnUrlFactory(path, "json")).then(async (res) => {
+      if (!res.ok) throw new Error("Spec index unavailable");
+      const reader = res.body?.getReader();
+      if (!reader) throw new Error("Spec index stream unavailable");
+      const chunks: Uint8Array[] = []; let size = 0;
+      try {
+        while (true) { const next = await reader.read(); if (next.done) break; size += next.value.length; if (size > 2_000_000) throw new Error("Spec index too large"); chunks.push(next.value); }
+      } finally { await reader.cancel(); }
+      const bytes = new Uint8Array(size); let offset = 0;
+      for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; }
+      return JSON.parse(new TextDecoder().decode(bytes));
+    }),
   );
 }
 
@@ -137,19 +159,18 @@ export async function importFromLocalhost<T = SpecFileImport>(
   name: string,
   port: number | string,
 ): Promise<T> {
-  return withTimeout(
-    20000,
-    import(
-      /* @vite-ignore */
-      `http://localhost:${port}/${name}.js`
-    ),
-  );
+  void name; void port;
+  throw new LoadLocalSpecError("HTTP developer specs are disabled; select a trusted local directory");
 }
 
-const cachedCLIVersions: Record<string, string | undefined> = {};
+const cachedCLIVersions = new Map<string, string | undefined>();
+const cacheCLIVersion = (key: string, value: string | undefined) => {
+  if (cachedCLIVersions.size >= 256) cachedCLIVersions.delete(cachedCLIVersions.keys().next().value!);
+  cachedCLIVersions.set(key, value);
+};
 
 export const getCachedCLIVersion = (key: string) =>
-  cachedCLIVersions[key] ?? null;
+  cachedCLIVersions.get(key) ?? null;
 
 export async function getVersionFromFullFile(
   specData: SpecFileImport,
@@ -166,7 +187,7 @@ export async function getVersionFromFullFile(
 
       if ("getVersionCommand" in specData && specData.getVersionCommand) {
         const newVersion = await specData.getVersionCommand(executeCommand);
-        cachedCLIVersions[storageKey] = newVersion;
+        cacheCLIVersion(storageKey, newVersion);
         return newVersion;
       }
 
@@ -179,7 +200,7 @@ export async function getVersionFromFullFile(
         ).stdout,
       );
       if (newVersion) {
-        cachedCLIVersions[storageKey] = newVersion;
+        cacheCLIVersion(storageKey, newVersion);
         return newVersion;
       }
     } catch {
@@ -201,15 +222,22 @@ export function clearSpecIndex() {
   publicSpecsRequest = undefined;
 }
 
-const INDEX_ZOD = z.object({
-  completions: z.array(z.string()),
-  diffVersionedCompletions: z.array(z.string()),
-});
+const parseSpecIndex = (value: unknown): { completions: string[]; diffVersionedCompletions: string[] } => {
+  if (!value || typeof value !== "object") throw new Error("Invalid spec index");
+  const index = value as Record<string, unknown>;
+  for (const key of ["completions", "diffVersionedCompletions"]) {
+    const values = index[key];
+    if (!Array.isArray(values) || values.length > 20000 || values.some((v) => typeof v !== "string" || v.length > 256 || !/^[a-zA-Z0-9_@+./-]+$/.test(v) || v.includes(".."))) {
+      throw new Error("Invalid or oversized spec index");
+    }
+  }
+  return index as { completions: string[]; diffVersionedCompletions: string[] };
+};
 
 const createPublicSpecsRequest = async () => {
   if (publicSpecsRequest === undefined) {
     publicSpecsRequest = jsonFromPublicCDN("index")
-      .then(INDEX_ZOD.parse)
+      .then(parseSpecIndex)
       .then((index) => ({
         completions: new Set(index.completions),
         diffVersionedSpecs: new Set(index.diffVersionedCompletions),

@@ -8,6 +8,7 @@ import {
 import { Cache } from "./cache";
 
 export type GeneratorContext = Fig.ShellContext & {
+  sessionId?: string;
   annotations: Annotation[];
   tokenArray: string[];
   isDangerous?: boolean;
@@ -26,6 +27,8 @@ export const haveContextForGenerator = (context: GeneratorContext): boolean =>
   Boolean(context.currentWorkingDirectory);
 
 export const generatorCache = new Cache();
+const generatorIDs = new WeakMap<Fig.Generator, number>();
+let nextGeneratorID = 1;
 
 export async function runCachedGenerator<T>(
   generator: Fig.Generator,
@@ -49,10 +52,13 @@ export async function runCachedGenerator<T>(
     : currentWorkingDirectory;
 
   // we cache generator results by script, if no script was provided we use the tokens instead
-  const key = [
+  if (!generatorIDs.has(generator)) generatorIDs.set(generator, nextGeneratorID++);
+  const key = JSON.stringify([
+    generatorIDs.get(generator),
+    context.sessionId,
     cache.cacheByDirectory ? directory : undefined,
-    cacheKey || tokenArray.join(" "),
-  ].toString();
+    cacheKey ?? tokenArray,
+  ]);
 
   return generatorCache.entry(key, initialRun, cache);
 }

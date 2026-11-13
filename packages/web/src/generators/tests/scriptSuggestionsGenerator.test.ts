@@ -14,13 +14,6 @@ import * as helpers from "../helpers";
 import { GeneratorContext } from "../helpers";
 import { getScriptSuggestions } from "../scriptSuggestionsGenerator";
 
-vi.mock(
-  "@jamun/api-bindings-wrappers/src/executeCommand",
-  async () =>
-    vi.importActual(
-      "@jamun/api-bindings-wrappers/src/executeCommand",
-    ),
-);
 
 const context: GeneratorContext = {
   annotations: [] as Annotation[],
@@ -32,7 +25,7 @@ const context: GeneratorContext = {
   environmentVariables: {},
 };
 
-describe.todo("getScriptSuggestions", () => {
+describe("getScriptSuggestions", () => {
   let executeCommand: MockInstance;
 
   beforeAll(() => {
@@ -66,10 +59,10 @@ describe.todo("getScriptSuggestions", () => {
         5000,
       ),
     ).toEqual([
-      { insertValue: "a/", isDangerous: undefined, name: "a/", type: "arg" },
-      { insertValue: "x", isDangerous: undefined, name: "x", type: "arg" },
-      { insertValue: "c/", isDangerous: undefined, name: "c/", type: "arg" },
-      { insertValue: "l", isDangerous: undefined, name: "l", type: "arg" },
+      { isDangerous: undefined, name: "a/", type: "arg" },
+      { isDangerous: undefined, name: "x", type: "arg" },
+      { isDangerous: undefined, name: "c/", type: "arg" },
+      { isDangerous: undefined, name: "l", type: "arg" },
     ]);
   });
 
@@ -130,6 +123,7 @@ describe.todo("getScriptSuggestions", () => {
         cwd: "/",
       },
       5000,
+      undefined,
     );
   });
 
@@ -142,6 +136,7 @@ describe.todo("getScriptSuggestions", () => {
     expect(executeCommand).toHaveBeenCalledWith(
       { args: [], command: "ascript", cwd: "/" },
       6000,
+      undefined,
     );
   });
 
@@ -154,6 +149,7 @@ describe.todo("getScriptSuggestions", () => {
     expect(executeCommand).toHaveBeenCalledWith(
       { args: [], command: "ascript", cwd: "/" },
       7000,
+      undefined,
     );
   });
 
@@ -165,6 +161,7 @@ describe.todo("getScriptSuggestions", () => {
     );
     expect(executeCommand).toHaveBeenCalledWith(
       { args: [], command: "ascript", cwd: "/" },
+      0,
       undefined,
     );
   });
@@ -174,6 +171,7 @@ describe.todo("getScriptSuggestions", () => {
     expect(executeCommand).toHaveBeenCalledWith(
       { args: [], command: "ascript", cwd: "/" },
       6000,
+      undefined,
     );
   });
 
@@ -191,6 +189,7 @@ describe.todo("getScriptSuggestions", () => {
       expect(executeCommand).toHaveBeenCalledWith(
         { args: [], command: "ascript", cwd: "/" },
         5000,
+        undefined,
       );
     });
   });

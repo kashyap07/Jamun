@@ -1,3 +1,4 @@
+import { Event } from "@jamun/api-bindings";
 import React, { useEffect, useRef } from "react";
 import { shallow } from "zustand/shallow";
 import { parseArguments } from "@jamun/autocomplete-parser";
@@ -49,15 +50,17 @@ export const useParseArgumentsEffect = (
     const tokens = command?.tokens || [];
     const oldTokens = oldCommand?.tokens || [];
 
+    const started = performance.now();
     setLoading(true);
     // Only run if we didn't error in bash parser.
     parseArguments(command, context)
       .then((result) => {
         if (!isMostRecentEffect) return;
         setLoading(false);
+        Event.measure("parse_ms", performance.now() - started);
 
         const hasBackspacedToNewToken =
-          tokens.length < oldTokens.length &&
+          tokens.length > 0 && tokens.length < oldTokens.length &&
           oldTokens[tokens.length - 1].text === tokens[tokens.length - 1].text;
 
         const text = command?.originalTree.text ?? "";

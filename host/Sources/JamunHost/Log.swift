@@ -1,41 +1,28 @@
 import Foundation
 
-/// Append-only log at ~/Library/Logs/Jamun/host.log, mirrored to stderr.
+/// Private, bounded logs. Ordinary diagnostics never contain command buffers or environments.
 enum Log {
-    static let url: URL = {
-        let dir = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Logs/Jamun", isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir.appendingPathComponent("host.log")
-    }()
-
-    private static let formatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "HH:mm:ss.SSS"
-        return f
-    }()
-
-    private static let handle: FileHandle? = {
-        if !FileManager.default.fileExists(atPath: url.path) {
-            FileManager.default.createFile(atPath: url.path, contents: nil)
-        }
-        let h = try? FileHandle(forWritingTo: url)
-        h?.seekToEndOfFile()
-        return h
-    }()
-
-    /// Verbose logging is on when ~/.jamun/debug exists.
-    static let verbose = FileManager.default.fileExists(
-        atPath: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".jamun/debug").path
-    )
-
-    static func debug(_ message: @autoclosure () -> String) {
-        if verbose { write(message()) }
-    }
-
+    private static let queue = DispatchQueue(label: "dev.jamun.log")
+    static let url = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/Jamun/host.log")
+    static let verbose = FileManager.default.fileExists(atPath: Paths.dataDir.appendingPathComponent("debug").path)
+    private static let formatter: ISO8601DateFormatter = ISO8601DateFormatter()
+    static func debug(_ message: @autoclosure () -> String) { if verbose { write(message()) } }
     static func write(_ message: String) {
-        let line = "\(formatter.string(from: Date())) \(message)\n"
-        FileHandle.standardError.write(Data(line.utf8))
-        handle?.write(Data(line.utf8))
+        let value = String(message.prefix(4096))
+        queue.async {
+            let manager = FileManager.default
+            try? manager.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+            if let size = (try? manager.attributesOfItem(atPath: url.path)[.size]) as? NSNumber, size.intValue > 1_048_576 {
+                let previous = url.appendingPathExtension("1")
+                try? manager.removeItem(at: previous)
+                try? manager.moveItem(at: url, to: previous)
+            }
+            if !manager.fileExists(atPath: url.path) { manager.createFile(atPath: url.path, contents: nil, attributes: [.posixPermissions: 0o600]) }
+            let line = Data("\(formatter.string(from: Date())) \(value)\n".utf8)
+            if let handle = try? FileHandle(forWritingTo: url) {
+                defer { try? handle.close() }
+                _ = try? handle.seekToEnd(); try? handle.write(contentsOf: line)
+            }
+        }
     }
 }

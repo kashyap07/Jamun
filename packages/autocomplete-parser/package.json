@@ -16,8 +16,7 @@
     "@fig/autocomplete-helpers": "^2.0.0",
     "@fig/autocomplete-shared": "^1.1.2",
     "loglevel": "^1.9.2",
-    "semver": "^7.7.2",
-    "zod": "^3.25.7"
+    "semver": "^7.7.2"
   },
   "devDependencies": {
     "@jamun/tsconfig": "*",
@@ -26,7 +25,7 @@
     "@types/semver": "^7.7.0",
     "@withfig/autocomplete-types": "^1.31.0",
     "typescript": "^5.8.3",
-    "vitest": "^3.0.8"
+    "vitest": "4.1.12"
   },
   "private": true
 }

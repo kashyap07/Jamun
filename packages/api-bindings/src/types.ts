@@ -15,6 +15,7 @@ export interface ShellContext {
   /** unique id of the shell session */
   sessionId?: string;
   integrationVersion?: number;
+  revision?: number;
   terminal?: string;
   hostname?: string;
   /** path to the shell being used in the terminal */
@@ -23,4 +24,5 @@ export interface ShellContext {
   environmentVariables?: EnvironmentVariable[];
   /** the raw output of alias */
   alias?: string;
+  aliases?: Record<string, string>;
 }

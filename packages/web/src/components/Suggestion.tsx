@@ -7,6 +7,8 @@ import { getQueryTermForSuggestion } from "../suggestions/helpers";
 import SuggestionIcon from "./SuggestionIcon";
 
 type SuggestionProps = {
+  index: number;
+  total: number;
   style: CSSProperties;
   suggestion: SuggestionT;
   onClick: (item: SuggestionT) => void;
@@ -31,6 +33,8 @@ type Text =
       type: HighlightType;
       highlight: string;
     };
+
+const regexLiteral = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 const getTitle = (
   item: SuggestionT,
@@ -124,7 +128,7 @@ const getTitle = (
     } else {
       out = nameArray.map((name) => {
         try {
-          const matches = name?.match(new RegExp(`^(${queryTerm})(.*)`, "i"));
+          const matches = name?.match(new RegExp(`^(${regexLiteral(queryTerm)})(.*)`, "i"));
           if (matches) {
             return [
               {
@@ -172,7 +176,7 @@ const getTitle = (
       try {
         if (name.length > 0 && name[0].type === "text") {
           const matches = name[0].text.match(
-            new RegExp(`^(${commonPrefix})(.*)`, "i"),
+            new RegExp(`^(${regexLiteral(commonPrefix)})(.*)`, "i"),
           );
           if (matches) {
             return [
@@ -196,7 +200,7 @@ const getTitle = (
           name[1].type === "text"
         ) {
           const matches = name[1].text.match(
-            new RegExp(`^(${commonPrefix.slice(queryTerm.length)})(.*)`, "i"),
+            new RegExp(`^(${regexLiteral(commonPrefix.slice(queryTerm.length))})(.*)`, "i"),
           );
           if (matches) {
             return [
@@ -271,6 +275,7 @@ const getTitle = (
 };
 
 const Suggestion = ({
+  index, total,
   style,
   suggestion,
   commonPrefix,
@@ -300,6 +305,12 @@ const Suggestion = ({
         isActive ? "bg-selected-bg/90 [clip-path:inset(0.5px_4px_round_8px)]" : ""
       }`}
       data-active-item={isActive ? true : undefined}
+      id={`suggestion-${index}`}
+      role="option"
+      aria-selected={isActive}
+      aria-posinset={index + 1}
+      aria-setsize={total}
+      aria-label={`${makeArray(suggestion.name).join(", ")}${suggestion.description ? `. ${suggestion.description}` : ""}`}
       onClick={onSuggestionClick}
     >
       <SuggestionIcon

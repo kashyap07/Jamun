@@ -8,6 +8,7 @@ import {
 import { ACTIONS, AutocompleteAction } from "../actions";
 import { useAutocompleteStore } from "../state";
 import { Visibility } from "../state/types";
+import { scalarLength } from "../state/literalEdit";
 
 export const setInterceptKeystrokes = (
   intercept: boolean,
@@ -19,6 +20,7 @@ export const setInterceptKeystrokes = (
     intercept,
     globalIntercept,
     currentTerminalSessionId,
+    getSetting<boolean>(SETTINGS.ONLY_SHOW_ON_TAB, false),
   );
 
 enum KeyCode {
@@ -35,63 +37,48 @@ export const useAutocompleteKeypressCallback = (
   shake: () => void,
   changeSize: (direction: Direction) => void,
 ): Parameters<typeof Keybindings.pressed>[0] => {
-  const {
-    suggestions,
-    visibleState,
-    selectedIndex,
-
-    setHistoryModeEnabled,
-    setUserFuzzySearchEnabled,
-    settings,
-
-    insertTextForItem,
-    insertCommonPrefix,
-    scroll: scrollToIndex,
-    setVisibleState,
-
-    figState,
-    setFigState,
-  } = useAutocompleteStore();
-
-  const selectedItem = suggestions[selectedIndex];
-  const scrollWrapAround = settings[SETTINGS.SCROLL_WRAP_AROUND];
-
-  const navigate = useCallback(
-    (delta: number, hideOrShowHistoryOnNegative = false) => {
-      let newIndex = selectedIndex + delta;
-      let newVisibleState = visibleState;
-      if (scrollWrapAround) {
-        newIndex = (newIndex + suggestions.length) % suggestions.length;
-      } else if (newIndex === -1 && hideOrShowHistoryOnNegative) {
-        if (getSetting<boolean>(SETTINGS.NAVIGATE_TO_HISTORY)) {
-          setHistoryModeEnabled((enabled) => !enabled);
-          return;
-        }
-        newVisibleState = Visibility.HIDDEN_UNTIL_KEYPRESS;
-      }
-      scrollToIndex(newIndex, newVisibleState);
-    },
-    [
-      selectedIndex,
-      visibleState,
-      suggestions.length,
-      scrollWrapAround,
-      setHistoryModeEnabled,
-    ],
-  );
-
   return useCallback(
     (notification) => {
       const { action, keypress, context: shellContext } = notification;
       logger.debug("Handling keypress", { notification, keypress, action });
 
-      setFigState({ ...figState, shellContext });
+      // Native key events can arrive before React commits another render.
+      // Read selection and suggestions together for every individual key.
+      const state = useAutocompleteStore.getState();
+      const {
+        suggestions, selectedIndex, visibleState, settings,
+        setHistoryModeEnabled, setUserFuzzySearchEnabled,
+        insertTextForItem, insertCommonPrefix, scroll: scrollToIndex, setVisibleState,
+        figState: current,
+      } = state;
+      const selectedItem = suggestions[selectedIndex];
+      const navigate = (delta: number, hideOrShowHistoryOnNegative = false) => {
+        if (!suggestions.length) { Keybindings.passThroughKey(); return; }
+        let newIndex = selectedIndex + delta;
+        let newVisibleState = visibleState;
+        if (settings[SETTINGS.SCROLL_WRAP_AROUND]) {
+          newIndex = (newIndex + suggestions.length) % suggestions.length;
+        } else if (newIndex === -1 && hideOrShowHistoryOnNegative) {
+          if (getSetting<boolean>(SETTINGS.NAVIGATE_TO_HISTORY)) {
+            setHistoryModeEnabled((enabled) => !enabled);
+            return;
+          }
+          newVisibleState = Visibility.HIDDEN_UNTIL_KEYPRESS;
+        }
+        scrollToIndex(newIndex, newVisibleState);
+      };
+      if (!shellContext?.sessionId || current.shellContext?.sessionId !== shellContext.sessionId ||
+          current.shellContext?.revision !== shellContext.revision) {
+        Keybindings.passThroughKey();
+        return undefined;
+      }
 
       if (
         getSetting<boolean>(SETTINGS.ONLY_SHOW_ON_TAB) &&
         keypress?.appleKeyCode === KeyCode.TAB &&
         visibleState !== Visibility.VISIBLE
       ) {
+        if (suggestions.length === 0) { Keybindings.passThroughKey(); return undefined; }
         if (suggestions.length === 1) {
           insertTextForItem(suggestions[0]);
           return undefined;
@@ -99,8 +86,8 @@ export const useAutocompleteKeypressCallback = (
         setVisibleState(Visibility.VISIBLE);
         return undefined;
       }
-      if (!selectedItem) {
-        return undefined;
+      if (!selectedItem && ![AutocompleteAction.SHOW_AUTOCOMPLETE, AutocompleteAction.HIDE_AUTOCOMPLETE, AutocompleteAction.TOGGLE_AUTOCOMPLETE].includes(action as AutocompleteAction)) {
+        Keybindings.passThroughKey(); return undefined;
       }
       switch (action) {
         case AutocompleteAction.NAVIGATE_UP:
@@ -137,7 +124,10 @@ export const useAutocompleteKeypressCallback = (
           insertTextForItem(selectedItem, true);
           break;
         case AutocompleteAction.EXECUTE:
-          Shell.insert("\n", undefined, figState.shellContext?.sessionId);
+          Shell.insert({ insertion: "", deletion: 0, moveLeft: 0, immediate: true,
+            expectedBuffer: current.buffer, expectedCursor: scalarLength(current.buffer.slice(0, current.cursorLocation)),
+            revision: shellContext.revision!, sessionId: shellContext.sessionId,
+          }).catch(() => logger.warn("Execute request expired"));
           break;
         case AutocompleteAction.HIDE_AUTOCOMPLETE:
           setVisibleState(Visibility.HIDDEN_UNTIL_SHOWN);
@@ -179,10 +169,10 @@ export const useAutocompleteKeypressCallback = (
         case AutocompleteAction.SELECT_SUGGESTION_8:
         case AutocompleteAction.SELECT_SUGGESTION_9:
         case AutocompleteAction.SELECT_SUGGESTION_10: {
-          const suggestionIndex = parseInt(action, 10) - 1;
+          const suggestionIndex = Number(action.replace("selectSuggestion", "")) - 1;
           if (
             suggestionIndex <= suggestions.length - 1 &&
-            suggestionIndex <= 0 &&
+            suggestionIndex >= 0 &&
             suggestionIndex <= 9
           ) {
             scrollToIndex(suggestionIndex, Visibility.VISIBLE);
@@ -195,18 +185,6 @@ export const useAutocompleteKeypressCallback = (
       }
       return undefined;
     },
-    [
-      navigate,
-      insertCommonPrefix,
-      insertTextForItem,
-      selectedItem,
-      toggleDescriptionPopout,
-      setHistoryModeEnabled,
-      visibleState,
-      setVisibleState,
-      changeSize,
-      figState,
-      setFigState,
-    ],
+    [toggleDescriptionPopout, shake, changeSize],
   );
 };

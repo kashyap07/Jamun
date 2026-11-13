@@ -19,9 +19,11 @@ final class SchemeHandler: NSObject, WKURLSchemeHandler {
         }
         switch scheme {
         case "jamun":
+            guard url.host == "app" else { fail(task, code: 403); return }
             let path = url.path.isEmpty || url.path == "/" ? "/index.html" : url.path
             serveFile(task, url: url, root: Paths.web, relativePath: path)
         case "spec":
+            guard url.host == "localhost" else { fail(task, code: 403); return }
             serveFile(task, url: url, root: Paths.specs, relativePath: url.path)
         case "fig":
             serveIcon(task, url: url)
@@ -36,8 +38,10 @@ final class SchemeHandler: NSObject, WKURLSchemeHandler {
 
     private func serveFile(_ task: WKURLSchemeTask, url: URL, root: URL, relativePath: String) {
         let rootPath = root.resolvingSymlinksInPath().standardizedFileURL.path
-        let candidate = URL(fileURLWithPath: rootPath + "/" + relativePath).standardizedFileURL
+        let candidate = URL(fileURLWithPath: rootPath + "/" + relativePath).resolvingSymlinksInPath().standardizedFileURL
         guard candidate.path.hasPrefix(rootPath + "/"),
+              let values = try? candidate.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
+              values.isRegularFile == true, (values.fileSize ?? Int.max) <= 8_000_000,
               let data = try? Data(contentsOf: candidate)
         else {
             fail(task, code: 404, url: url)
@@ -130,6 +134,7 @@ final class SchemeHandler: NSObject, WKURLSchemeHandler {
             return true
         }
         guard let data = png(canvas, side: side) else { return nil }
+        if symbolCache.count >= 256 { symbolCache.removeAll(keepingCapacity: true) }
         symbolCache[name] = data
         return data
     }
@@ -175,7 +180,10 @@ final class SchemeHandler: NSObject, WKURLSchemeHandler {
             "Content-Type": mime,
             "Content-Length": String(data.count),
             // Specs are imported as modules from a different scheme than the app.
+            // Custom WKWebView schemes can have opaque origins. These are public bundled assets.
             "Access-Control-Allow-Origin": "*",
+            "Content-Security-Policy": "default-src 'none'; script-src jamun: spec: blob:; style-src 'unsafe-inline' jamun:; img-src fig: jamun: data: https:; font-src jamun: data:; connect-src spec: jamun: https:; frame-src 'none'; object-src 'none'; base-uri 'none'",
+            "X-Content-Type-Options": "nosniff",
             "Cache-Control": "no-cache",
         ]
         guard let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: headers) else {

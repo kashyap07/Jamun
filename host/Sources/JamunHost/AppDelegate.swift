@@ -14,6 +14,11 @@ final class ShellSession {
     var cursor: Int = 0
     /// True while zsh is reading a command line.
     var atPrompt = false
+    var keyEditRejected = false
+    var revision = 0
+    var aliases: [String: String] = [:]
+    var environment: [String: String] = [:]
+    var keyID: String?
 
     init(id: String, connection: SocketServer.Connection) {
         self.id = id
@@ -29,11 +34,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var trustItem: NSMenuItem!
     private var sessionsItem: NSMenuItem!
+    private var enabledItem: NSMenuItem!
+    private var healthItem: NSMenuItem!
 
     private var sessions: [String: ShellSession] = [:]
     private var activeSessionID: String?
     private var caretGeneration = 0
     private var lastCaretLog = ""
+    private var enabled = true
+    private var socketReady = false
+    private var pendingEdits: [String: (sessionID: String, reply: (Result<Any, BridgeError>) -> Void)] = [:]
+    private let supportedKeys: Set<String> = ["up", "down", "tab", "shift+tab", "enter", "esc", "control+p", "control+n", "control+k", "control+r"]
+    private let contextKeys: Set<String> = ["PATH", "HOME", "USER", "LANG", "LC_ALL", "LC_CTYPE", "KUBECONFIG", "AWS_PROFILE", "AWS_DEFAULT_PROFILE", "AWS_REGION", "AWS_DEFAULT_REGION", "GOOGLE_CLOUD_PROJECT", "CLOUDSDK_CORE_PROJECT", "VIRTUAL_ENV", "CONDA_PREFIX", "PYENV_VERSION", "NVM_BIN", "GOPATH", "CARGO_HOME", "XDG_CONFIG_HOME", "SSH_AUTH_SOCK"]
     private var snapshotSignal: DispatchSourceSignal?
     private var timingSignal: DispatchSourceSignal?
     private lazy var terminalWatcher = TerminalWatcher { [weak self] in
@@ -48,6 +60,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         Log.write("jamun host started, pid \(ProcessInfo.processInfo.processIdentifier)")
+        enabled = Settings.all()["jamun.enabled"] as? Bool ?? true
         setUpStatusItem()
 
         let trusted = CaretTracker.isTrusted(prompt: true)
@@ -57,6 +70,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         popup.onRequest = { [weak self] method, params, reply in
             self?.handleWebRequest(method, params, reply)
         }
+        popup.onUnavailable = { [weak self] in self?.resetInterception() }
         popup.load()
 
         server.onMessage = { [weak self] connection, message in
@@ -67,9 +81,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         do {
             try server.start(path: Paths.socket)
-            Log.write("listening on \(Paths.socket)")
+            socketReady = true
+            Log.write("socket ready")
         } catch {
             Log.write("could not start socket server: \(error)")
+            if (error as? POSIXError)?.code == .EADDRINUSE { NSApp.terminate(nil) }
         }
 
         // Debug aid: `kill -USR1 <pid>` saves a picture of the popup contents.
@@ -104,7 +120,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        unlink(Paths.socket)
+        resetInterception()
+        server.stop()
+        ProcessRunner.shutdown()
     }
 
     private func setUpStatusItem() {
@@ -118,9 +136,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.delegate = self
         trustItem = NSMenuItem(title: "Accessibility: checking", action: nil, keyEquivalent: "")
         sessionsItem = NSMenuItem(title: "Shells connected: 0", action: nil, keyEquivalent: "")
+        enabledItem = NSMenuItem(title: "Enable Autocomplete", action: #selector(toggleEnabled), keyEquivalent: "")
+        healthItem = NSMenuItem(title: "Popup: loading", action: nil, keyEquivalent: "")
+        menu.addItem(enabledItem)
+        menu.addItem(healthItem)
         menu.addItem(trustItem)
         menu.addItem(sessionsItem)
         menu.addItem(NSMenuItem(title: "Open Accessibility Settings", action: #selector(openSettings), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "Set Up Shell Integration…", action: #selector(installShell), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "Remove Shell Integration…", action: #selector(uninstallShell), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "Reload Autocomplete", action: #selector(reloadPopup), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "Show Diagnostics…", action: #selector(showDiagnostics), keyEquivalent: ""))
+        menu.addItem(.separator())
+        menu.addItem(NSMenuItem(title: "Trust Developer Specs Folder…", action: #selector(chooseDeveloperSpecs), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "Disable Developer Specs", action: #selector(disableDeveloperSpecs), keyEquivalent: ""))
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Quit Jamun", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         statusItem.menu = menu
@@ -130,6 +159,73 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
             NSWorkspace.shared.open(url)
         }
+    }
+
+    private func showMessage(_ title: String, _ detail: String) {
+        let alert = NSAlert(); alert.messageText = title; alert.informativeText = detail
+        alert.addButton(withTitle: "OK"); alert.runModal()
+    }
+    @objc private func toggleEnabled() {
+        enabled.toggle()
+        try? Settings.set(key: "jamun.enabled", json: enabled ? "true" : "false")
+        resetInterception(); updateAllowed()
+        if enabled { popup.load() }
+    }
+    @objc private func reloadPopup() { popup.load() }
+    @objc private func installShell() {
+        let alert = NSAlert()
+        alert.messageText = "Set up Jamun for zsh?"
+        alert.informativeText = "Adds a marked source block to \(ShellIntegration.zshrc.path) and installs the bundled integration in ~/.jamun. Your existing configuration is preserved."
+        alert.addButton(withTitle: "Install"); alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        do {
+            try ShellIntegration.install()
+            showMessage("Shell integration installed", "Open a new Terminal window to use this version. Existing shells keep their currently loaded integration until restarted.")
+        } catch { showMessage("Installation failed", error.localizedDescription) }
+    }
+    @objc private func uninstallShell() {
+        let alert = NSAlert(); alert.messageText = "Remove Jamun shell integration?"
+        alert.informativeText = "Removes only Jamun's marked zshrc block and installed script. Settings and logs are retained. Restart existing shells afterward."
+        alert.addButton(withTitle: "Remove"); alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        do { try ShellIntegration.uninstall(); enabled = false; resetInterception(); updateAllowed() }
+        catch { showMessage("Removal failed", error.localizedDescription) }
+    }
+    @objc private func chooseDeveloperSpecs() {
+        let alert = NSAlert(); alert.messageText = "Trust a developer specs folder?"
+        alert.informativeText = "JavaScript in the selected folder can run commands with your account's privileges. Trust only code you control. This also trusts future edits in that folder; project-local specs elsewhere remain disabled."
+        alert.addButton(withTitle: "Choose Folder…"); alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let picker = NSOpenPanel(); picker.canChooseDirectories = true; picker.canChooseFiles = false; picker.allowsMultipleSelection = false
+        guard picker.runModal() == .OK, let url = picker.url else { return }
+        do {
+            let data = try JSONSerialization.data(withJSONObject: url.resolvingSymlinksInPath().path, options: [.fragmentsAllowed])
+            try Settings.set(key: "autocomplete.devCompletionsFolder", json: String(data: data, encoding: .utf8))
+            try Settings.set(key: "autocomplete.developerMode", json: "true")
+            try Settings.set(key: "jamun.allowLocalSpecs", json: "true")
+            popup.load()
+        } catch { showMessage("Could not save developer settings", error.localizedDescription) }
+    }
+    @objc private func disableDeveloperSpecs() {
+        do {
+            try Settings.set(key: "jamun.allowLocalSpecs", json: "false")
+            try Settings.set(key: "autocomplete.developerMode", json: "false")
+            popup.load()
+        } catch { showMessage("Could not save settings", error.localizedDescription) }
+    }
+    @objc private func showDiagnostics() {
+        let manager = FileManager.default
+        let resourcesOK = [Paths.web.appendingPathComponent("index.html"), Paths.specs.appendingPathComponent("index.json"), Paths.shellIntegration].allSatisfy { manager.fileExists(atPath: $0.path) }
+        showMessage("Jamun diagnostics", [
+            "Host socket: \(socketReady ? "ready" : "unavailable")",
+            "Shells connected: \(sessions.count)",
+            "Shell integration: \(ShellIntegration.installed ? "installed" : "not installed")",
+            "Accessibility: \(CaretTracker.isTrusted(prompt: false) ? "granted" : "not granted")",
+            "Bundled resources: \(resourcesOK ? "available" : "missing — rebuild/reinstall the app")",
+            "Popup: \(popup.health)", "Supported terminal: Terminal.app with zsh",
+            "Frontmost terminal: \(terminalIsFrontmost ? "supported" : "switch to Terminal.app")",
+            Diagnostics.summary(),
+        ].filter { !$0.isEmpty }.joined(separator: "\n"))
     }
 
     // MARK: visibility
@@ -158,7 +254,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func updateAllowed() {
-        popup.setAllowed(terminalIsFrontmost && (activeSession?.atPrompt ?? false))
+        popup.setAllowed(enabled && terminalIsFrontmost && (activeSession?.atPrompt ?? false))
     }
 
     // MARK: caret
@@ -191,6 +287,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
+        let lookupStarted = ProcessInfo.processInfo.systemUptime
+        defer { Diagnostics.record("caret_ms", value: (ProcessInfo.processInfo.systemUptime - lookupStarted) * 1000) }
         switch CaretTracker.caret(pid: app.processIdentifier, trailingSpaces: trailingSpaces) {
         case .success(let caret):
             popup.setCaret(caret.rect)
@@ -208,31 +306,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func handleShellMessage(_ connection: SocketServer.Connection, _ message: [String: Any]) {
         guard let type = message["t"] as? String else { return }
-        Log.debug("shell -> \(message)")
+        Log.debug("shell event: \(type)")
 
         if type == "hello" {
-            let id = message["sid"] as? String ?? UUID().uuidString
+            guard connection.sessionID == nil,
+                  (message["version"] as? Int) == 2,
+                  let id = message["sid"] as? String, id.count <= 128,
+                  id.range(of: "^[a-zA-Z0-9-]+$", options: .regularExpression) != nil,
+                  sessions[id] == nil else { server.closeConnection(connection); return }
             let session = ShellSession(id: id, connection: connection)
             session.pid = (message["pid"] as? NSNumber)?.intValue ?? 0
             session.tty = message["tty"] as? String ?? ""
             session.shellPath = message["shell"] as? String ?? "/bin/zsh"
             connection.sessionID = id
             sessions[id] = session
+            server.send(connection, fields: ["hello", "2"])
             Log.write("shell connected: \(id) pid \(session.pid) \(session.tty)")
             return
         }
 
-        guard let id = connection.sessionID, let session = sessions[id] else { return }
+        guard let id = connection.sessionID, let session = sessions[id], session.connection === connection else { return }
 
         switch type {
         case "prompt":
             session.cwd = message["cwd"] as? String ?? session.cwd
-            session.path = message["path"] as? String ?? session.path
+            session.environment = (message["environment"] as? [String: String] ?? [:]).filter { contextKeys.contains($0.key) && $0.value.utf8.count <= 8192 }
+            session.path = session.environment["PATH"] ?? ""
+            session.aliases = message["aliases"] as? [String: String] ?? [:]
         case "edit":
+            guard let revision = message["rev"] as? Int, revision > session.revision else { return }
             session.buffer = message["buf"] as? String ?? ""
-            session.cursor = (message["cur"] as? NSNumber)?.intValue ?? 0
+            session.cursor = min(max(0, (message["cur"] as? NSNumber)?.intValue ?? 0), session.buffer.unicodeScalars.count)
+            session.revision = revision
             session.cwd = message["cwd"] as? String ?? session.cwd
             session.atPrompt = true
+            if activeSessionID != id, let previous = activeSession {
+                server.send(previous.connection, fields: ["keys", ""])
+                ProcessRunner.cancelSession(previous.id)
+            }
             activeSessionID = id
             updateAllowed()
             watchTerminal()
@@ -241,6 +352,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case "finish":
             // The command line was accepted or aborted.
             session.atPrompt = false
+            session.revision = max(session.revision + 1, message["rev"] as? Int ?? 0)
+            ProcessRunner.cancelSession(session.id)
             session.buffer = ""
             session.cursor = 0
             if activeSessionID == id {
@@ -248,21 +361,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 emitEditBuffer(session)
             }
         case "key":
-            guard let key = message["key"] as? String else { return }
-            popup.emit(event: "key", payload: ["key": key, "context": context(for: session)])
+            guard let key = message["key"] as? String,
+                  let keyID = message["keyId"] as? String,
+                  Int(keyID) != nil else { return }
+            guard enabled, popup.isReady, supportedKeys.contains(key), activeSessionID == id,
+                  session.atPrompt, message["rev"] as? Int == session.revision else {
+                server.send(connection, fields: ["done", keyID, "0"]); return
+            }
+            session.keyID = keyID
+            session.keyEditRejected = false
+            popup.emit(event: "key", payload: ["key": key, "keyId": keyID, "context": context(for: session)])
+        case "editAck":
+            guard let requestID = message["requestId"] as? String,
+                  let pending = pendingEdits[requestID], pending.sessionID == session.id else { return }
+            pendingEdits.removeValue(forKey: requestID)
+            if message["accepted"] as? Bool == true { pending.reply(.success(["accepted": true])) }
+            else { pending.reply(.failure(BridgeError("stale_edit"))) }
         default:
             break
         }
     }
 
     private func handleShellClosed(_ connection: SocketServer.Connection) {
-        guard let id = connection.sessionID else { return }
+        guard let id = connection.sessionID, sessions[id]?.connection === connection else { return }
+        ProcessRunner.cancelSession(id)
+        for (requestID, pending) in Array(pendingEdits) where pending.sessionID == id {
+            pendingEdits.removeValue(forKey: requestID); pending.reply(.failure(BridgeError("session_closed")))
+        }
         sessions.removeValue(forKey: id)
         Log.write("shell disconnected: \(id)")
         if activeSessionID == id {
             activeSessionID = nil
             updateAllowed()
         }
+    }
+
+    private func resetInterception() {
+        for session in sessions.values {
+            session.keyID = nil
+            server.send(session.connection, fields: ["keys", ""])
+        }
+        for pending in pendingEdits.values { pending.reply(.failure(BridgeError("popup_reset"))) }
+        pendingEdits.removeAll()
+        ProcessRunner.cancelAll()
     }
 
     private func context(for session: ShellSession) -> [String: Any] {
@@ -273,24 +414,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             "currentWorkingDirectory": session.cwd,
             "sessionId": session.id,
             "shellPath": session.shellPath,
-            // Specs expand "~" and similar from these, not from the host's own environment.
-            "environmentVariables": [
-                ["key": "PATH", "value": session.path],
-                ["key": "HOME", "value": Paths.home.path],
-                ["key": "USER", "value": NSUserName()],
-            ],
+            "integrationVersion": 2,
+            "revision": session.revision,
+            "aliases": session.aliases,
+            "environmentVariables": session.environment.map { ["key": $0.key, "value": $0.value] },
         ]
     }
 
     private func emitEditBuffer(_ session: ShellSession) {
+        guard enabled else { return }
         // zsh counts the cursor in unicode scalars, JavaScript strings index by UTF-16.
         let scalars = session.buffer.unicodeScalars
-        let end = scalars.index(scalars.startIndex, offsetBy: min(session.cursor, scalars.count))
+        let end = scalars.index(scalars.startIndex, offsetBy: max(0, min(session.cursor, scalars.count)))
         let cursor = String(scalars[scalars.startIndex..<end]).utf16.count
         popup.emit(event: "editbuffer", payload: [
             "sessionId": session.id,
             "buffer": session.buffer,
             "cursor": cursor,
+            "revision": session.revision,
             "context": context(for: session),
         ])
     }
@@ -298,9 +439,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: web -> host
 
     private func session(for params: [String: Any]) -> ShellSession? {
-        if let id = params["sessionId"] as? String, let session = sessions[id] {
-            return session
-        }
+        if let id = params["sessionId"] as? String { return sessions[id] }
         return activeSession
     }
 
@@ -313,12 +452,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             CGFloat((params[key] as? NSNumber)?.doubleValue ?? 0)
         }
         func string(_ key: String) -> String? { params[key] as? String }
-        if method != "log" { Log.debug("web -> \(method) \(params)") }
+        if method != "log" { Log.debug("web method: \(method)") }
 
         switch method {
         case "log":
             let message = (string("message") ?? "").prefix(600)
-            Log.write("web \(string("level") ?? "log"): \(message)")
+            Log.write("web \(string("level") ?? "log") (details require debug mode)")
+            Log.debug(String(message))
 
         case "window.position":
             let placement = popup.position(
@@ -329,34 +469,61 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             )
             reply(.success(["isAbove": placement.isAbove, "isClipped": placement.isClipped]))
 
+        case "metrics.record":
+            if let name = string("name"), let value = params["value"] as? Double { Diagnostics.record(name, value: value) }
+        case "bridge.ready":
+            guard params["version"] as? Int == 2 else { reply(.failure(BridgeError("protocol_mismatch"))); return }
+            popup.markReady()
+            if let session = activeSession {
+                emitEditBuffer(session)
+                server.send(session.connection, fields: ["resync"])
+            }
+            reply(.success(["version": 2]))
+        case "bridge.closed":
+            resetInterception()
         case "keys.intercept":
-            let keys = params["keys"] as? [String] ?? []
-            if let session = session(for: params) {
-                server.send(session.connection, fields: ["keys", keys.joined(separator: ",")])
-            }
+            guard let id = string("sessionId"), let session = sessions[id] else { reply(.failure(BridgeError("unknown_session"))); return }
+            let keys = (params["keys"] as? [String] ?? []).filter { supportedKeys.contains($0) }
+            let allowedKeys = enabled && activeSessionID == id && session.atPrompt ? keys : []
+            server.send(session.connection, fields: ["keys", allowedKeys.joined(separator: ",")])
             reply(.success([:] as [String: Any]))
-
         case "key.done":
-            // The shell is blocked waiting for this after forwarding a key.
-            if let session = session(for: params) {
-                server.send(session.connection, fields: ["done"])
+            if let session = session(for: params), let keyID = string("keyId"), session.keyID == keyID {
+                server.send(session.connection, fields: ["done", keyID, params["handled"] as? Bool == true && !session.keyEditRejected ? "1" : "0"])
+                session.keyID = nil
             }
-
         case "shell.insert":
-            if let session = session(for: params) {
-                let deletion = (params["deletion"] as? NSNumber)?.intValue ?? 0
-                let moveLeft = (params["moveLeft"] as? NSNumber)?.intValue ?? 0
-                let immediate = params["immediate"] as? Bool ?? false
-                server.send(session.connection, fields: [
-                    "insert",
-                    String(deletion),
-                    String(moveLeft),
-                    immediate ? "1" : "0",
-                    SocketServer.escapeField(string("insertion") ?? ""),
-                ])
+            guard enabled, popup.isReady, let id = string("sessionId"), let session = sessions[id],
+                  session.atPrompt, activeSessionID == id,
+                  string("expectedBuffer") == session.buffer,
+                  params["expectedCursor"] as? Int == session.cursor,
+                  params["revision"] as? Int == session.revision,
+                  let deletion = params["deletion"] as? Int, deletion >= 0, deletion <= session.cursor,
+                  let insertion = string("insertion"), !insertion.contains("\0"), insertion.utf8.count <= 65536,
+                  let moveLeft = params["moveLeft"] as? Int, moveLeft >= 0,
+                  moveLeft <= session.cursor - deletion + insertion.unicodeScalars.count,
+                  let keyID = string("keyId"), keyID == "0" || keyID == session.keyID else {
+                if let id = string("sessionId"), let target = sessions[id], string("keyId") == target.keyID { target.keyEditRejected = true }
+                Diagnostics.increment("rejected_edits"); reply(.failure(BridgeError("stale_or_invalid_edit"))); return
             }
-            reply(.success([:] as [String: Any]))
-
+            let requestID = UUID().uuidString
+            pendingEdits[requestID] = (session.id, reply)
+            let expires = Int(Date().timeIntervalSince1970 * 1000) + 1500
+            server.send(session.connection, fields: [
+                "insert", requestID, keyID, String(session.revision), String(session.cursor), String(expires),
+                String(deletion), String(moveLeft), params["immediate"] as? Bool == true ? "1" : "0",
+                "v" + SocketServer.escapeField(session.buffer), "v" + SocketServer.escapeField(insertion),
+            ])
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+                self?.pendingEdits.removeValue(forKey: requestID)?.reply(.failure(BridgeError("edit_timeout")))
+            }
+        case "process.cancel":
+            if let requestID = params["requestId"] as? Int, let generation = string("_generation") { ProcessRunner.cancel("\(generation):\(requestID)") }
+        case "spec.read":
+            do {
+                let contents = try SpecPolicy.read(path: string("path") ?? "")
+                reply(.success(["contents": contents]))
+            } catch { reply(.failure(BridgeError("local_spec_not_trusted"))) }
         case "process.run":
             runProcess(params, reply)
 
@@ -370,7 +537,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 reply(.failure(BridgeError("settings.set needs a key")))
                 return
             }
-            Settings.set(key: key, json: string("value"))
+            guard !["jamun.allowLocalSpecs", "autocomplete.devCompletionsFolder"].contains(key),
+                  key != "autocomplete.developerMode" || string("value") == "false" else {
+                reply(.failure(BridgeError("use_native_developer_settings"))); return
+            }
+            do { try Settings.set(key: key, json: string("value")) }
+            catch { reply(.failure(BridgeError("settings_write_failed"))); return }
             popup.emit(event: "settings", payload: ["jsonBlob": Settings.jsonBlob(key: nil) ?? "{}"])
             reply(.success([:] as [String: Any]))
 
@@ -387,13 +559,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func runProcess(_ params: [String: Any], _ reply: @escaping (Result<Any, BridgeError>) -> Void) {
+        guard enabled else { reply(.failure(BridgeError("autocomplete_paused"))); return }
         guard let executable = params["executable"] as? String else {
             reply(.failure(BridgeError("process.run needs an executable")))
             return
         }
         let session = session(for: params)
-        var environment = ProcessInfo.processInfo.environment
-        if let path = session?.path, !path.isEmpty { environment["PATH"] = path }
+        if params["sessionId"] != nil && session == nil { reply(.failure(BridgeError("unknown_session"))); return }
+        var environment = ["HOME": Paths.home.path, "USER": NSUserName(), "PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "LANG": "en_US.UTF-8"]
+        environment.merge(session?.environment ?? [:]) { _, value in value }
         for (key, value) in params["environment"] as? [String: Any] ?? [:] {
             if let value = value as? String { environment[key] = value }
         }
@@ -403,11 +577,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let timeoutMs = (params["timeout"] as? NSNumber)?.doubleValue ?? 5000
         ProcessRunner.run(
+            id: params["_processId"] as? String ?? UUID().uuidString, sessionID: session?.id,
             executable: executable,
             arguments: params["args"] as? [String] ?? [],
             environment: environment,
             workingDirectory: (params["workingDirectory"] as? String) ?? session?.cwd,
-            timeout: max(timeoutMs, 5000) / 1000
+            timeout: min(max(timeoutMs.isFinite ? timeoutMs : 5000, 50), 120000) / 1000
         ) { result in
             switch result {
             case .success(let output):
@@ -417,6 +592,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     "stderr": output.stderr,
                 ]))
             case .failure(let error):
+                Diagnostics.increment("process_failures")
                 reply(.failure(BridgeError("could not run \(executable): \(error.localizedDescription)")))
             }
         }
@@ -428,10 +604,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         let path = Paths.expandTilde(rawPath)
+        let candidate = URL(fileURLWithPath: path).resolvingSymlinksInPath().standardizedFileURL.path
+        if ["fs.write", "fs.append", "fs.mkdir"].contains(method) && !candidate.hasPrefix(Paths.dataDir.resolvingSymlinksInPath().path + "/") {
+            reply(.failure(BridgeError("write_outside_jamun_data"))); return
+        }
         let manager = FileManager.default
         do {
             switch method {
             case "fs.read":
+                let attributes = try manager.attributesOfItem(atPath: path)
+                guard attributes[.type] as? FileAttributeType == .typeRegular,
+                      ((attributes[.size] as? NSNumber)?.intValue ?? Int.max) <= 2_000_000 else { throw BridgeError("file_too_large_or_not_regular") }
                 let contents = try? String(contentsOfFile: path, encoding: .utf8)
                 reply(.success(["contents": contents as Any? ?? NSNull()]))
             case "fs.list":
@@ -440,6 +623,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 try (params["contents"] as? String ?? "").write(toFile: path, atomically: true, encoding: .utf8)
                 reply(.success([:] as [String: Any]))
             case "fs.append":
+                if let size = (try? manager.attributesOfItem(atPath: path)[.size]) as? NSNumber, size.intValue > 1_048_576 { try Data().write(to: URL(fileURLWithPath: path), options: .atomic) }
                 let data = Data((params["contents"] as? String ?? "").utf8)
                 if let handle = FileHandle(forWritingAtPath: path) {
                     defer { try? handle.close() }
@@ -469,6 +653,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 extension AppDelegate: NSMenuDelegate {
     func menuWillOpen(_ menu: NSMenu) {
         let trusted = CaretTracker.isTrusted(prompt: false)
+        enabledItem.state = enabled ? .on : .off
+        healthItem.title = "Popup: \(popup.health)"
         trustItem.title = trusted ? "Accessibility: granted" : "Accessibility: not granted"
         sessionsItem.title = "Shells connected: \(sessions.count)"
     }

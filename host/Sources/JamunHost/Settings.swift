@@ -21,6 +21,7 @@ enum Settings {
     private static let defaults: [String: Any] = {
         var values: [String: Any] = [
             "autocomplete.theme": "system",
+            "autocomplete.firstTokenCompletion": true,
             // Up on the first row wraps to the last instead of closing the
             // popup. Closing it hands a held-down Up key to the shell's own
             // binding (atuin), which then fails to start under the key flood.
@@ -51,17 +52,20 @@ enum Settings {
     }
 
     /// `json` is the JSON-encoded value. Nil removes the key.
-    static func set(key: String, json: String?) {
-        var settings = stored()
-        if let json, let data = json.data(using: .utf8),
-           let value = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed]) {
-            settings[key] = value
-        } else {
-            settings.removeValue(forKey: key)
+    static func set(key: String, json: String?) throws {
+        var settings: [String: Any] = [:]
+        if FileManager.default.fileExists(atPath: Paths.settings.path) {
+            guard let object = try JSONSerialization.jsonObject(with: Data(contentsOf: Paths.settings)) as? [String: Any] else { throw BridgeError("invalid_settings_file") }
+            settings = object
         }
-        guard let data = try? JSONSerialization.data(withJSONObject: settings, options: [.prettyPrinted, .sortedKeys]) else { return }
-        try? FileManager.default.createDirectory(at: Paths.dataDir, withIntermediateDirectories: true)
-        try? data.write(to: Paths.settings, options: .atomic)
+        if let json {
+            guard let data = json.data(using: .utf8), data.count <= 65536 else { throw BridgeError("invalid_setting") }
+            settings[key] = try JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed])
+        } else { settings.removeValue(forKey: key) }
+        let data = try JSONSerialization.data(withJSONObject: settings, options: [.prettyPrinted, .sortedKeys])
+        try FileManager.default.createDirectory(at: Paths.dataDir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        try data.write(to: Paths.settings, options: .atomic)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: Paths.settings.path)
     }
 }
 

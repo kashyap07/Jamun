@@ -1,0 +1,26 @@
+name: Checks
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  macos:
+    runs-on: macos-26
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+      - run: zsh -n shell/jamun.zsh && bash -n scripts/*.sh
+      - run: npm run build
+        env:
+          JAMUN_SIGN_IDENTITY: '-'
+      - run: npm run test:package -- build/Jamun.app
+      - run: npm audit

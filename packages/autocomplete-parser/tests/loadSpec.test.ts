@@ -134,90 +134,30 @@ describe("loadFigSubcommand", () => {
     (loadHelpers.isDiffVersionedSpec as Mock).mockClear();
   });
 
-  it("works with expected input", async () => {
-    const result = await loadFigSubcommand({
-      name: "path",
-      type: SpecLocationSource.LOCAL,
-    });
-    expect(loadHelpers.isDiffVersionedSpec).toHaveBeenCalledTimes(1);
+  it("rejects project-local specs without attempting to import code", async () => {
+    vi.mocked(importSpecFromFile).mockClear();
+    await expect(loadFigSubcommand({ name: "path", type: SpecLocationSource.LOCAL }))
+      .rejects.toThrow("Project-local completion code is disabled");
+    expect(importSpecFromFile).not.toHaveBeenCalled();
+  });
+
+  it("loads a developer spec through the native trust-gated reader", async () => {
+    const devPath = "~/some-folder/";
+    updateSettings({ [SETTINGS.DEV_COMPLETIONS_FOLDER]: devPath, [SETTINGS.DEV_MODE]: true });
+    const result = await loadFigSubcommand({ name: "git", type: SpecLocationSource.LOCAL });
+    expect(importSpecFromFile).toHaveBeenLastCalledWith("git", devPath, logger);
     expect(result.name).toBe("loadFromFile");
   });
 
-  it("works in dev mode", async () => {
-    const devPath = "~/some-folder/";
-    const specLocation: Fig.SpecLocation = {
-      name: "git",
-      type: SpecLocationSource.LOCAL,
-    };
-
-    updateSettings({
-      [SETTINGS.DEV_COMPLETIONS_FOLDER]: devPath,
-      [SETTINGS.DEV_MODE_NPM]: false,
-      [SETTINGS.DEV_MODE]: false,
-    });
-    await loadFigSubcommand(specLocation);
-    expect(importSpecFromFile).toHaveBeenLastCalledWith(
-      "git",
-      `${FIG_DIR}/autocomplete/build/`,
-      logger,
-    );
-
-    updateSettings({
-      [SETTINGS.DEV_COMPLETIONS_FOLDER]: devPath,
-      [SETTINGS.DEV_MODE_NPM]: true,
-      [SETTINGS.DEV_MODE]: false,
-    });
-    await loadFigSubcommand(specLocation);
-    expect(importSpecFromFile).toHaveBeenLastCalledWith("git", devPath, logger);
-
-    updateSettings({
-      [SETTINGS.DEV_COMPLETIONS_FOLDER]: devPath,
-      [SETTINGS.DEV_MODE_NPM]: false,
-      [SETTINGS.DEV_MODE]: true,
-    });
-    await loadFigSubcommand(specLocation);
-    expect(importSpecFromFile).toHaveBeenLastCalledWith("git", devPath, logger);
-
-    updateSettings({
-      [SETTINGS.DEV_COMPLETIONS_FOLDER]: "~/some-folder/",
-      [SETTINGS.DEV_MODE_NPM]: false,
-      [SETTINGS.DEV_MODE]: true,
-    });
-    await loadFigSubcommand(specLocation);
-    expect(importSpecFromFile).toHaveBeenLastCalledWith("git", devPath, logger);
-
-    expect(loadHelpers.isDiffVersionedSpec).toHaveBeenCalledTimes(4);
+  it("does not fall back to project code when the developer reader denies access", async () => {
+    updateSettings({ [SETTINGS.DEV_COMPLETIONS_FOLDER]: "~/untrusted", [SETTINGS.DEV_MODE]: true });
+    vi.mocked(importSpecFromFile).mockRejectedValueOnce(new Error("local_spec_not_trusted"));
+    await expect(loadFigSubcommand({ name: "tool", type: SpecLocationSource.LOCAL }))
+      .rejects.toThrow("Project-local completion code is disabled");
   });
+
 });
 
 describe("loadSubcommandCached", () => {
-  // This is broken right now...
-  it.todo("works", async () => {
-    const oldLoadSpec = loadFigSubcommand;
-    (loadFigSubcommand as Mock) = vi.fn();
-    (loadFigSubcommand as Mock).mockResolvedValue({ name: "exampleSpec" });
-    const context: Fig.ShellContext = {
-      currentWorkingDirectory: "",
-      currentProcess: "",
-      sshPrefix: "",
-      environmentVariables: {},
-    };
-
-    await loadSubcommandCached(
-      { name: "git", type: SpecLocationSource.LOCAL },
-      context,
-    );
-    await loadSubcommandCached(
-      { name: "git", type: SpecLocationSource.LOCAL },
-      context,
-    );
-    expect(loadFigSubcommand).toHaveBeenCalledTimes(1);
-
-    await loadSubcommandCached(
-      { name: "hg", type: SpecLocationSource.LOCAL },
-      context,
-    );
-    expect(loadFigSubcommand).toHaveBeenCalledTimes(2);
-    (loadFigSubcommand as unknown) = oldLoadSpec;
-  });
+  it.todo("deduplicates subcommand loading across matching contexts");
 });

@@ -23,7 +23,6 @@ import {
   SpecFileImport,
   importSpecFromFile,
   isDiffVersionedSpec,
-  importFromLocalhost,
 } from "./loadHelpers.js";
 import { DisabledSpecError, MissingSpecError } from "./errors.js";
 import { specCache } from "./caches.js";
@@ -121,20 +120,10 @@ export const importSpecFromLocation = async (
     ? (getSetting(SETTINGS.DEV_COMPLETIONS_FOLDER) as string)
     : undefined;
 
-  const devPort = isInDevMode()
-    ? getSetting(SETTINGS.DEV_COMPLETIONS_SERVER_PORT)
-    : undefined;
 
   let specFile: SpecFileImport | undefined;
   let resolvedLocation: ResolvedSpecLocation | undefined;
 
-  if (typeof devPort === "string" || typeof devPort === "number") {
-    const { diffVersionedFile, name } = specLocation;
-    specFile = await importFromLocalhost(
-      diffVersionedFile ? `${name}/${diffVersionedFile}` : name,
-      devPort,
-    );
-  }
 
   if (!specFile && devPath) {
     try {
@@ -151,15 +140,7 @@ export const importSpecFromLocation = async (
   }
 
   if (!specFile && specLocation.type === SpecLocationSource.LOCAL) {
-    // If we couldn't successfully load a dev spec try loading from specPath.
-    const { name, path } = specLocation;
-    const [dirname, basename] = splitPath(`${path || "~/"}${name}`);
-
-    specFile = await importSpecFromFile(
-      basename,
-      `${dirname}.fig/autocomplete/build/`,
-      localLogger,
-    );
+    throw new DisabledSpecError("Project-local completion code is disabled; use an explicitly trusted developer directory");
   } else if (!specFile) {
     const { name, diffVersionedFile: versionFileName } = specLocation;
 
@@ -176,16 +157,7 @@ export const importSpecFromLocation = async (
         localLogger.error("Unable to load from CDN", err);
         throw err;
       }
-    } else {
-      try {
-        specFile = await importSpecFromFile(
-          name,
-          `~/.fig/autocomplete/build/`,
-          localLogger,
-        );
-      } catch (_err) {
-        /* empty */
-      }
+
     }
   }
 

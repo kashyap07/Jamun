@@ -1,4 +1,3 @@
-import { sleep } from "@jamun/shared/utils";
 import { Annotation } from "@jamun/autocomplete-parser";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -50,300 +49,57 @@ describe("haveContextForGenerator", () => {
 });
 
 describe("runCachedGenerator", () => {
-  describe("no cache object", () => {
-    const initialRun = vi.fn();
-
-    beforeEach(() => {
-      generatorCache.clear();
-    });
-
-    afterEach(() => {
-      initialRun.mockClear();
-    });
-
-    it("should return the right result", async () => {
-      initialRun.mockResolvedValue("result");
-
-      expect(
-        await runCachedGenerator({}, context, initialRun, "command"),
-      ).toEqual("result");
-      expect(initialRun).toHaveBeenCalled();
-    });
-
-    it("should call initialRun many times without cache", async () => {
-      for (let i = 0; i < 2; i += 1) {
-        await runCachedGenerator({}, context, initialRun, "command");
-      }
-
-      expect(initialRun).toHaveBeenCalledTimes(2);
-    });
+  beforeEach(() => { generatorCache.clear(); vi.useFakeTimers(); vi.setSystemTime(10000); });
+  afterEach(() => vi.useRealTimers());
+  it("does not cache without a policy", async () => {
+    const run = vi.fn().mockResolvedValue("value");
+    const generator = {};
+    await runCachedGenerator(generator, context, run);
+    await runCachedGenerator(generator, context, run);
+    expect(run).toHaveBeenCalledTimes(2);
   });
-
-  describe("should respect cacheByDirectory key when cache is specified", () => {
-    const initialRun = vi.fn();
-
-    beforeEach(() => {
-      generatorCache.clear();
-    });
-
-    afterEach(() => {
-      initialRun.mockClear();
-    });
-
-    it("should call initialRun once with cache by directory not expired", async () => {
-      const generator: Fig.Generator = {
-        cache: {
-          ttl: 1000,
-          strategy: "max-age",
-          cacheByDirectory: true,
-        },
-      };
-
-      for (let i = 0; i < 2; i += 1) {
-        await runCachedGenerator(generator, context, initialRun, "command");
-      }
-
-      expect(initialRun).toHaveBeenCalledTimes(1);
-    });
-
-    it("should call initialRun twice with directory change", async () => {
-      const contexts = [
-        context,
-        { ...context, currentWorkingDirectory: "/test" },
-      ];
-      const generator: Fig.Generator = {
-        cache: {
-          ttl: 1000,
-          strategy: "max-age",
-          cacheByDirectory: true,
-        },
-      };
-
-      for (let i = 0; i < 2; i += 1) {
-        await runCachedGenerator(generator, contexts[i], initialRun, "command");
-      }
-
-      expect(initialRun).toHaveBeenCalledTimes(2);
-    });
-
-    it("should call initialRun once with directory change and not caching by directory", async () => {
-      const contexts = [
-        context,
-        { ...context, currentWorkingDirectory: "/test" },
-      ];
-      const generator: Fig.Generator = {
-        cache: {
-          ttl: 1000,
-          strategy: "max-age",
-          cacheByDirectory: false,
-        },
-      };
-
-      for (let i = 0; i < 2; i += 1) {
-        await runCachedGenerator(generator, contexts[i], initialRun, "command");
-      }
-
-      expect(initialRun).toHaveBeenCalledTimes(1);
-    });
+  it("reuses a static script within one generator but isolates other generators and sessions", async () => {
+    const run = vi.fn().mockResolvedValue("value");
+    const generator: Fig.Generator = { cache: { strategy: "max-age", ttl: 1000 } };
+    await runCachedGenerator(generator, context, run, "script");
+    await runCachedGenerator(generator, { ...context, tokenArray: ["different"] }, run, "script");
+    expect(run).toHaveBeenCalledTimes(1);
+    await runCachedGenerator({ ...generator }, context, run, "script");
+    await runCachedGenerator(generator, { ...context, sessionId: "B" }, run, "script");
+    expect(run).toHaveBeenCalledTimes(3);
   });
-
-  describe("should attempt to cache based on `script` field", () => {
-    const initialRun = vi.fn();
-
-    beforeEach(() => {
-      generatorCache.clear();
-    });
-
-    afterEach(() => {
-      initialRun.mockClear();
-    });
-
-    it("caches generator based on script, not tokens, if script field is static", async () => {
-      const contexts = [context, { ...context, tokenArray: ["a", "b"] }];
-      const generator: Fig.Generator = {
-        script: ["echo", "hello world"],
-        cache: {
-          strategy: "stale-while-revalidate",
-        },
-      };
-
-      const generators: Fig.Generator[] = [
-        generator,
-        { ...generator, cache: { strategy: "max-age", ttl: 1_000 } },
-      ];
-
-      for (let i = 0; i < 2; i += 1) {
-        await runCachedGenerator(
-          generators[i],
-          contexts[i],
-          initialRun,
-          JSON.stringify(generator.script),
-        );
-      }
-
-      expect(initialRun).toHaveBeenCalledTimes(1);
-    });
-
-    it("caches generator based on tokens, if script field is a FUNCTION", async () => {
-      const contexts = [context, { ...context, tokenArray: ["a", "b"] }];
-      const generator: Fig.Generator = {
-        script: ["echo", "hello world"],
-        cache: {
-          strategy: "stale-while-revalidate",
-        },
-      };
-
-      const generators: Fig.Generator[] = [
-        generator,
-        { ...generator, cache: { strategy: "max-age", ttl: 1_000 } },
-      ];
-
-      for (let i = 0; i < 2; i += 1) {
-        console.log(contexts[i]);
-        await runCachedGenerator(
-          generators[i],
-          contexts[i],
-          initialRun,
-          JSON.stringify(generator.script),
-        );
-      }
-
-      expect(initialRun).toHaveBeenCalledTimes(1);
-    });
-
-    // todo: implement a better approach to caching custom generators
-    it("caches generator based on tokens, if using CUSTOM generator", async () => {
-      const contexts = [context, { ...context, tokenArray: ["a", "b"] }];
-      const generator: Fig.Generator = {
-        custom: async () => [],
-        cache: {
-          strategy: "stale-while-revalidate",
-        },
-      };
-
-      const generators: Fig.Generator[] = [
-        generator,
-        { ...generator, cache: { strategy: "max-age", ttl: 1_000 } },
-      ];
-
-      for (let i = 0; i < 2; i += 1) {
-        console.log(contexts[i]);
-        await runCachedGenerator(generators[i], contexts[i], initialRun);
-      }
-
-      expect(initialRun).toHaveBeenCalledTimes(2);
-    });
+  it.each([true, false])("respects cacheByDirectory=%s", async (cacheByDirectory) => {
+    const run = vi.fn().mockResolvedValue("value");
+    const generator: Fig.Generator = { cache: { strategy: "max-age", ttl: 1000, cacheByDirectory } };
+    await runCachedGenerator(generator, context, run);
+    await runCachedGenerator(generator, { ...context, currentWorkingDirectory: "/other" }, run);
+    expect(run).toHaveBeenCalledTimes(cacheByDirectory ? 2 : 1);
   });
-
-  describe("no cache strategy specified (max-age)", () => {
-    const generator: Fig.Generator = { cache: { ttl: 1_000 } };
-
-    beforeEach(() => {
-      generatorCache.clear();
-    });
-
-    it("should return the right result", async () => {
-      expect(
-        await runCachedGenerator(
-          generator,
-          context,
-          () => Promise.resolve("stale-data"),
-          "command",
-        ),
-      ).toEqual("stale-data");
-      expect(
-        await runCachedGenerator(
-          generator,
-          context,
-          () => Promise.resolve("fresh-data"),
-          "command",
-        ),
-      ).toEqual("stale-data");
-      await sleep(1_500);
-      expect(
-        await runCachedGenerator(
-          generator,
-          context,
-          () => Promise.resolve("fresher-data"),
-          "command",
-        ),
-      ).toEqual("fresher-data");
-    });
+  it("waits for fresh data when max-age expires", async () => {
+    const generator: Fig.Generator = { cache: { strategy: "max-age", ttl: 1000 } };
+    expect(await runCachedGenerator(generator, context, async () => "old")).toBe("old");
+    vi.advanceTimersByTime(1001);
+    expect(await runCachedGenerator(generator, context, async () => "new")).toBe("new");
   });
-
-  describe("max-age cache strategy", () => {
-    const generator: Fig.Generator = {
-      cache: { strategy: "max-age", ttl: 1_000 },
-    };
-
-    beforeEach(() => {
-      generatorCache.clear();
-    });
-
-    it("should return the right result", async () => {
-      expect(
-        await runCachedGenerator(
-          generator,
-          context,
-          () => Promise.resolve("stale-data"),
-          "command",
-        ),
-      ).toEqual("stale-data");
-      expect(
-        await runCachedGenerator(
-          generator,
-          context,
-          () => Promise.resolve("fresh-data"),
-          "command",
-        ),
-      ).toEqual("stale-data");
-      await sleep(1_500);
-      expect(
-        await runCachedGenerator(
-          generator,
-          context,
-          () => Promise.resolve("fresher-data"),
-          "command",
-        ),
-      ).toEqual("fresher-data");
-    });
+  it.each([undefined, "stale-while-revalidate"] as const)("returns stale data during background refresh (%s)", async (strategy) => {
+    const generator: Fig.Generator = { cache: { strategy, ttl: 1000 } };
+    await runCachedGenerator(generator, context, async () => "old");
+    vi.advanceTimersByTime(1001);
+    let resolve!: (value: string) => void;
+    const pending = new Promise<string>((done) => { resolve = done; });
+    expect(await runCachedGenerator(generator, context, () => pending)).toBe("old");
+    resolve("new");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(await runCachedGenerator(generator, context, async () => "unexpected")).toBe("new");
   });
-
-  describe("stale-while-revalidate cache strategy", () => {
-    const generator: Fig.Generator = {
-      cache: { strategy: "stale-while-revalidate", ttl: 1_000 },
-    };
-
-    beforeEach(() => {
-      generatorCache.clear();
-    });
-
-    it("should return the right result", async () => {
-      expect(
-        await runCachedGenerator(
-          generator,
-          context,
-          () => Promise.resolve("stale-data"),
-          "command",
-        ),
-      ).toEqual("stale-data");
-      await sleep(1_500);
-      expect(
-        await runCachedGenerator(
-          generator,
-          context,
-          () => Promise.resolve("fresh-data"),
-          "command",
-        ),
-      ).toEqual("fresh-data");
-      expect(
-        await runCachedGenerator(
-          generator,
-          context,
-          () => Promise.resolve("fresh-data"),
-          "command",
-        ),
-      ).toEqual("fresh-data");
-    });
+  it("recovers from rejection and deduplicates simultaneous callers", async () => {
+    const generator: Fig.Generator = { cache: { strategy: "max-age", ttl: 1000 } };
+    const failing = vi.fn().mockRejectedValue(new Error("temporary"));
+    const results = await Promise.allSettled([
+      runCachedGenerator(generator, context, failing), runCachedGenerator(generator, context, failing),
+    ]);
+    expect(results.map((result) => result.status)).toEqual(["rejected", "rejected"]);
+    expect(failing).toHaveBeenCalledTimes(1);
+    expect(await runCachedGenerator(generator, context, async () => "recovered")).toBe("recovered");
   });
 });

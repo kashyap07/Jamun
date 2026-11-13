@@ -1,4 +1,5 @@
 import logger from "loglevel";
+import { Event } from "@jamun/api-bindings";
 import { StoreApi } from "zustand";
 import { sleep } from "@jamun/shared/utils";
 import { ArgumentParserResult } from "@jamun/autocomplete-parser";
@@ -16,7 +17,8 @@ import { isTemplateSuggestion } from "../suggestions";
 
 export const shellContextSelector = ({
   figState,
-}: AutocompleteState): Fig.ShellContext => ({
+}: AutocompleteState): Fig.ShellContext & { sessionId?: string } => ({
+  sessionId: figState.shellContext?.sessionId,
   currentWorkingDirectory: figState.cwd || "",
   currentProcess: figState.processUserIsIn || "",
   environmentVariables: figState.environmentVariables,
@@ -70,12 +72,9 @@ export const createGeneratorState = (
   function updateGeneratorOnResult(generatorState: GeneratorState) {
     const { generator, loading, request } = generatorState;
     if (loading && request) {
-      request.then((result) =>
-        updateGenerator(generatorState, () => ({
-          loading: false,
-          result: result.map((suggestion) => ({ ...suggestion, generator })),
-        })),
-      );
+      request.then((result) => updateGenerator(generatorState, () => ({
+        loading: false, result: result.map((suggestion) => ({ ...suggestion, generator })),
+      }))).catch(() => updateGenerator(generatorState, () => ({ loading: false, result: [] })));
     }
     return generatorState;
   }
@@ -83,6 +82,7 @@ export const createGeneratorState = (
   const triggerGenerator = (currentState: GeneratorState) => {
     logger.info("Triggering generator", { currentState });
     const { generator, context } = currentState;
+    const started = performance.now();
     let request: Promise<Fig.Suggestion[]>;
 
     if (generator.template) {
@@ -112,6 +112,7 @@ export const createGeneratorState = (
         })();
       }
     }
+    request = request.finally(() => Event.measure("generator_ms", performance.now() - started));
     return updateGeneratorOnResult({ ...currentState, loading: true, request });
   };
 
@@ -130,7 +131,7 @@ export const createGeneratorState = (
       const { trigger } = generator;
       const previousGeneratorState = state.generatorStates[index];
       let shouldTrigger = false;
-      if (!previousGeneratorState || currentArg !== previousArg) {
+      if (!previousGeneratorState || currentArg !== previousArg || previousGeneratorState.context.sessionId !== context.sessionId || previousGeneratorState.context.currentWorkingDirectory !== context.currentWorkingDirectory) {
         shouldTrigger = true;
       } else if (trigger === undefined) {
         // If trigger is undefined we never trigger, unless debounced in

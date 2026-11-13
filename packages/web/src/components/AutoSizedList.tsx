@@ -4,6 +4,7 @@ import {
   useImperativeHandle,
   ForwardRefRenderFunction,
   forwardRef,
+  HTMLAttributes,
 } from "react";
 import { FixedSizeList as List } from "react-window";
 import { twMerge } from "tailwind-merge";
@@ -19,6 +20,11 @@ type AutoSizedListProps = Omit<List["props"], "height" | "width"> & {
 export type AutoSizedHandleRef = {
   scrollToItem: (index: number) => void;
 };
+
+const Listbox = forwardRef<HTMLDivElement, HTMLAttributes<HTMLDivElement>>((props, ref) => (
+  <div {...props} ref={ref} role="listbox" aria-label="Command suggestions" />
+));
+Listbox.displayName = "SuggestionListbox";
 
 // List will attempt to be size (itemCount * itemSize) but will shrink and
 // scroll if necessary.
@@ -56,6 +62,7 @@ const AutoSizedList: ForwardRefRenderFunction<
       className="min-h-0 min-w-0 flex-shrink"
     >
       <List
+        outerElementType={Listbox}
         width={desiredWidth === undefined ? width || 0 : desiredWidth}
         ref={listRef}
         height={height || 0}

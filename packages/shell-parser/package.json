@@ -14,7 +14,7 @@
   "devDependencies": {
     "@jamun/tsconfig": "*",
     "typescript": "^5.8.3",
-    "vitest": "^3.0.8"
+    "vitest": "4.1.12"
   },
   "private": true
 }

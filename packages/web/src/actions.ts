@@ -69,7 +69,7 @@ export const ACTIONS = app.contributes.actions.map((action) => {
 const defaultSelectSuggestionKeybindings = app.contributes.actions.reduce(
   (p, v) => {
     if (v.identifier.startsWith("selectSuggestion")) {
-      return Object.assign(p, { [v.identifier]: v.defaultBindings });
+      return Object.assign(p, { [v.identifier]: v.defaultBindings.filter(Keybindings.isSupportedKey) });
     }
     return p;
   },
@@ -85,6 +85,7 @@ export const updateSelectSuggestionKeybindings = (settings: SettingsMap) => {
       value.startsWith(SELECT_SUGGESTION_ACTION_PREFIX)
     ) {
       const keybinding = key.replace("autocomplete.keybindings.", "");
+      if (!Keybindings.isSupportedKey(keybinding)) continue;
       if (!selectSuggestionKeybindings[value]) {
         selectSuggestionKeybindings[value] = [keybinding];
       } else {
@@ -103,4 +104,11 @@ export const getSelectSuggestionKeybinding = (
   suggestionIndex: number /* This is an index so it starts from 0 */,
 ) => selectSuggestionKeybindings[`selectSuggestion${suggestionIndex + 1}`];
 
-export const getActionKeybindings = () => {};
+export const getActionKeybindings = (settings: SettingsMap, action: string): string[] => {
+  const defaults = ACTIONS.find((item) => item.identifier === action)?.defaultBindings ?? [];
+  const keys = new Set(defaults.filter((key) => !settings[`autocomplete.keybindings.${key}` as keyof SettingsMap]));
+  for (const [setting, value] of Object.entries(settings)) {
+    if (setting.startsWith("autocomplete.keybindings.") && value === action) keys.add(setting.slice("autocomplete.keybindings.".length));
+  }
+  return [...keys].filter(Keybindings.isSupportedKey);
+};

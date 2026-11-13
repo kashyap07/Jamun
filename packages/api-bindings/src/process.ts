@@ -22,12 +22,13 @@ export async function run({
   /** milliseconds */
   timeout?: number;
 }) {
+  const deadline = Number.isFinite(timeout) ? Math.min(120000, Math.max(50, timeout!)) : 5000;
   return request<RunProcessResponse>("process.run", {
     executable,
     args,
     environment: environment ?? {},
     workingDirectory,
-    sessionId: terminalSessionId,
-    timeout,
-  });
+    sessionId: terminalSessionId || undefined,
+    timeout: deadline,
+  }, deadline + 1000);
 }

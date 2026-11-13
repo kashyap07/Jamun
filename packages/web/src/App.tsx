@@ -1,6 +1,7 @@
 import {
   WindowPosition,
   Settings,
+  Event,
 } from "@jamun/api-bindings";
 import { SETTINGS } from "@jamun/api-bindings-wrappers";
 import React, {
@@ -69,7 +70,7 @@ function App() {
     suggestions,
     selectedIndex,
     visibleState,
-    figState: { buffer, cwd, shellContext },
+    figState: { buffer, cwd, shellContext, receivedAt },
     parserResult: { searchTerm, currentArg },
     settings,
     setSettings,
@@ -96,7 +97,7 @@ function App() {
     [SETTINGS.WIDTH]: settingsWidth,
     [SETTINGS.HEIGHT]: settingsHeight,
     [SETTINGS.ALWAYS_SHOW_DESCRIPTION]: alwaysShowDescription,
-    [SETTINGS.DEV_MODE_NPM]: devMode,
+    [SETTINGS.DEV_MODE]: devMode,
   } = settings;
 
   const [size, setSize] = useState({
@@ -208,6 +209,10 @@ function App() {
   useFigSettings(setSettings);
   useFigKeypress(keypressCallback);
   useFigClearCache();
+  useEffect(() => {
+    Event.ready().catch(() => logger.warn("Jamun protocol handshake failed"));
+    return () => Event.closed();
+  }, []);
 
   useEffect(() => {
     Settings.get(SETTINGS.DISABLE_HISTORY_LOADING)
@@ -238,6 +243,14 @@ function App() {
   // Make sure fig dimensions align with our desired dimensions.
   const isHidden = visibleState !== Visibility.VISIBLE;
   const interceptKeystrokes = Boolean(!isHidden && suggestions.length > 0);
+  const measuredRevision = useRef<string>();
+  useEffect(() => {
+    const revision = `${shellContext?.sessionId}:${shellContext?.revision}`;
+    if (isHidden || isLoading || !receivedAt || measuredRevision.current === revision) return;
+    measuredRevision.current = revision;
+    const frame = requestAnimationFrame(() => Event.measure("suggestion_ms", performance.now() - receivedAt));
+    return () => cancelAnimationFrame(frame);
+  }, [isHidden, isLoading, receivedAt, shellContext?.sessionId, shellContext?.revision, suggestions]);
 
   useEffect(() => {
     logger.info("Setting intercept keystrokes", {
@@ -249,8 +262,12 @@ function App() {
       suggestions.length > 0,
       shellContext?.sessionId,
     );
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [interceptKeystrokes, suggestions.length]);
+  }, [interceptKeystrokes, suggestions.length, shellContext?.sessionId, settings]);
+  // Updating the current map must not briefly release every key to zsh.
+  // Release only when leaving this terminal session or unmounting the UI.
+  useEffect(() => () => {
+    setInterceptKeystrokes(false, false, shellContext?.sessionId);
+  }, [shellContext?.sessionId]);
   useEffect(() => {
     setTheme(systemTheme, theme as string);
   }, [theme, systemTheme]);
@@ -409,30 +426,10 @@ function App() {
       className="m-1 space-y-1.5 rounded bg-amber-500 px-2.5 py-2 text-black"
     >
       <div className="text-base font-bold">Developer mode enabled!</div>
-      <div className="text-sm">
-        Loading specs from disk. Disable with either
-      </div>
-      <div className="ml-2 flex flex-col gap-1 text-xs">
-        <div>
-          •{" "}
-          <code className="rounded-sm bg-zinc-700 p-0.5 text-zinc-200">
-            Ctrl + C
-          </code>{" "}
-          in the dev mode process
-        </div>
-        <div>
-          {"• "}
-          <button
-            type="button"
-            className="text-xs underline"
-            onClick={() => {
-              Settings.set("autocomplete.developerModeNPM", false);
-            }}
-          >
-            Click to disable
-          </button>
-        </div>
-      </div>
+      <div className="text-sm">Using your trusted developer specs folder.</div>
+      <button type="button" className="text-xs underline" onClick={() => Settings.set("autocomplete.developerMode", false).then(() => window.location.reload()).catch(() => logger.warn("Could not disable developer specs"))}>
+        Disable developer specs
+      </button>
     </div>
   ) : null;
 
@@ -471,6 +468,8 @@ function App() {
             >
               {({ index, style }) => (
                 <Suggestion
+                  index={index}
+                  total={suggestions.length}
                   style={style}
                   suggestion={suggestions[index]}
                   commonPrefix={commonPrefix || ""}
@@ -510,6 +509,9 @@ function App() {
       className="relative flex flex-col overflow-hidden"
     >
       {contents}
+      <span className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+        {suggestions[selectedIndex] ? `${selectedIndex + 1} of ${suggestions.length}: ${suggestions[selectedIndex].description ?? ""}` : ""}
+      </span>
     </div>
   );
 }

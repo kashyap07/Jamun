@@ -59,7 +59,7 @@ export async function getScriptSuggestions(
     const { stdout } = await runCachedGenerator(
       generator,
       context,
-      () => executeCommandTimeout(executeCommandInput, timeout),
+      () => executeCommandTimeout(executeCommandInput, timeout, context.sessionId),
       generator.cache?.cacheKey ?? JSON.stringify(executeCommandInput),
     );
 
@@ -82,7 +82,7 @@ export async function getScriptSuggestions(
     // Generator can either output an array of strings or an array of suggestion objects.
     return result.map((item) =>
       typeof item === "string"
-        ? { type: "arg", name: item, insertValue: item, isDangerous }
+        ? { type: "arg", name: item, isDangerous }
         : { ...item, type: item.type || "arg" },
     );
   } catch (e) {

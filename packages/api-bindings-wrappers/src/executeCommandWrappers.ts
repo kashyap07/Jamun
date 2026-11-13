@@ -83,9 +83,8 @@ export const executeLoginShell = async ({
         return cleanOutput(output.stdout);
       }),
     );
-    const idx =
-      result.lastIndexOf(DONE_SOURCING_OSC) + DONE_SOURCING_OSC.length;
-    const trimmed = result.slice(idx);
+    const marker = result.lastIndexOf(DONE_SOURCING_OSC);
+    const trimmed = marker === -1 ? result : result.slice(marker + DONE_SOURCING_OSC.length);
     const end = performance.now();
     logger.info(`Result of login shell command '${command}'`, {
       result: trimmed,

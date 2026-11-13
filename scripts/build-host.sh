@@ -1,47 +1,49 @@
 #!/usr/bin/env bash
-# Builds the Swift host and assembles a signed build/Jamun.app.
-# Signing with a stable identity keeps the Accessibility grant across rebuilds.
-# Override the identity with JAMUN_SIGN_IDENTITY, otherwise the first
-# "Apple Development" identity in the keychain is used (ad-hoc if none).
+# Build a self-contained app. Does not modify ~/.jamun or shell configuration.
 set -euo pipefail
-
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-APP="$ROOT/build/Jamun.app"
-
+BUILD_DIR="${JAMUN_BUILD_DIR:-$ROOT/build}"
+APP="$BUILD_DIR/Jamun.app"
+SPECS="$ROOT/node_modules/@withfig/autocomplete"
+for required in "$ROOT/packages/web/dist/index.html" "$SPECS/build/index.json" "$ROOT/shell/jamun.zsh"; do
+  [[ -f "$required" ]] || { echo "Missing required resource: $required. Run npm ci and npm run build:web first." >&2; exit 1; }
+done
+[[ -d "$SPECS/icons" ]] || { echo "Missing bundled spec icons" >&2; exit 1; }
 swift build -c release --package-path "$ROOT/host"
 BIN_DIR="$(swift build -c release --package-path "$ROOT/host" --show-bin-path)"
-
-rm -rf "$APP"
-mkdir -p "$APP/Contents/MacOS"
-cp "$BIN_DIR/JamunHost" "$APP/Contents/MacOS/JamunHost"
-cp "$ROOT/host/Info.plist" "$APP/Contents/Info.plist"
-
-# Web app (run `npm run build:web` first).
-if [[ -d "$ROOT/packages/web/dist" ]]; then
-  mkdir -p "$APP/Contents/Resources"
-  cp -R "$ROOT/packages/web/dist" "$APP/Contents/Resources/web"
-else
-  echo "warning: packages/web/dist is missing, the popup will be empty"
-fi
-
-# Specs, icons, and the shell integration are linked into ~/.jamun so they can
-# change without re-signing the app.
-mkdir -p "$HOME/.jamun"
-ln -sfn "$ROOT/node_modules/@withfig/autocomplete/build" "$HOME/.jamun/specs"
-ln -sfn "$ROOT/node_modules/@withfig/autocomplete/icons" "$HOME/.jamun/icons"
-ln -sfn "$ROOT/shell/jamun.zsh" "$HOME/.jamun/jamun.zsh"
-
+mkdir -p "$BUILD_DIR"
+STAGING="$(mktemp -d "$BUILD_DIR/.jamun-XXXXXX")"
+trap 'rm -rf "$STAGING"' EXIT
+BUNDLE="$STAGING/Jamun.app"
+mkdir -p "$BUNDLE/Contents/MacOS" "$BUNDLE/Contents/Resources/shell" "$BUNDLE/Contents/Resources/licenses"
+cp "$BIN_DIR/JamunHost" "$BUNDLE/Contents/MacOS/JamunHost"
+cp "$ROOT/host/Info.plist" "$BUNDLE/Contents/Info.plist"
+cp -R "$ROOT/packages/web/dist" "$BUNDLE/Contents/Resources/web"
+cp -R "$SPECS/build" "$BUNDLE/Contents/Resources/specs"
+cp -R "$SPECS/icons" "$BUNDLE/Contents/Resources/icons"
+cp "$ROOT/shell/jamun.zsh" "$BUNDLE/Contents/Resources/shell/jamun.zsh"
+cp "$ROOT/packages/LICENSE.fig.APACHE" "$ROOT/packages/LICENSE.fig.MIT" "$BUNDLE/Contents/Resources/licenses/"
+cp "$ROOT/packages/fuzzysort/LICENSE" "$BUNDLE/Contents/Resources/licenses/fuzzysort.LICENSE"
+cp "$ROOT/THIRD_PARTY_NOTICES.md" "$BUNDLE/Contents/Resources/licenses/"
+# Include the actual license distributed with the locked spec package.
+for license in "$SPECS"/LICENSE*; do
+  if [[ -f "$license" ]]; then cp "$license" "$BUNDLE/Contents/Resources/licenses/specs-$(basename "$license")"; fi
+done
 IDENTITY="${JAMUN_SIGN_IDENTITY:-}"
-if [[ -z "$IDENTITY" ]]; then
+if [[ -z "$IDENTITY" && ${JAMUN_RELEASE:-0} != 1 ]]; then
   IDENTITY="$(security find-identity -v -p codesigning | awk '/Apple Development/ {print $2; exit}')"
 fi
-
-if [[ -n "$IDENTITY" ]]; then
-  codesign --force --sign "$IDENTITY" "$APP"
-  echo "signed with identity $IDENTITY"
+if [[ ${JAMUN_RELEASE:-0} == 1 ]]; then
+  [[ -n "$IDENTITY" ]] || { echo "Release builds require JAMUN_SIGN_IDENTITY (Developer ID Application)." >&2; exit 1; }
+  codesign --force --options runtime --timestamp --sign "$IDENTITY" "$BUNDLE"
 else
-  codesign --force --sign - "$APP"
-  echo "warning: ad-hoc signed, Accessibility permission will reset on every rebuild"
+  codesign --force --sign "${IDENTITY:--}" "$BUNDLE"
 fi
-
-echo "built $APP"
+# Keep the previous working app until the replacement is fully assembled and signed.
+rm -rf "$APP.previous"
+[[ ! -d "$APP" ]] || mv "$APP" "$APP.previous"
+if ! mv "$BUNDLE" "$APP"; then
+  [[ ! -d "$APP.previous" ]] || mv "$APP.previous" "$APP"
+  exit 1
+fi
+echo "Built $APP (previous build retained as Jamun.app.previous)."

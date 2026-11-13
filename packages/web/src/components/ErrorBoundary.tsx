@@ -1,3 +1,4 @@
+import { Event } from "@jamun/api-bindings";
 import { Component, ErrorInfo, ReactNode } from "react";
 
 interface Props {
@@ -19,6 +20,7 @@ class ErrorBoundary extends Component<Props, State> {
   }
 
   public componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    Event.closed();
     console.error("Uncaught error:", error, errorInfo);
 
     // Reload the page in 5 seconds

@@ -12,12 +12,16 @@ class CacheEntry<T> {
   }
 
   private async fetchSync(run: () => Promise<T>) {
-    this.lastFetch = Date.now();
-    this.promise = run();
-    this.value = await this.promise;
-    if (!this.isInitialized) this.isInitialized = true;
-    this.promise = undefined;
-    return this.value;
+    const promise = Promise.resolve().then(run);
+    this.promise = promise;
+    try {
+      this.value = await promise;
+      this.lastFetch = Date.now();
+      this.isInitialized = true;
+      return this.value;
+    } finally {
+      if (this.promise === promise) this.promise = undefined;
+    }
   }
 
   private async fetchAsync(run: () => Promise<T>): Promise<T | undefined> {
@@ -29,7 +33,7 @@ class CacheEntry<T> {
   }
 
   private async maxAgeCache(run: () => Promise<T>, maxAge: number) {
-    if (Date.now() > maxAge + this.lastFetch) {
+    if (Date.now() >= (maxAge ?? 0) + this.lastFetch) {
       return this.fetchAsync(run);
     }
     return this.value;
@@ -37,7 +41,7 @@ class CacheEntry<T> {
 
   private async swrCache(run: () => Promise<T>, maxAge = 0) {
     if (!this.isFetching && Date.now() > this.lastFetch + maxAge) {
-      return this.fetchAsync(run);
+      void this.fetchAsync(run).catch(() => { /* Keep stale success and retry on the next request. */ });
     }
     return this.value as T;
   }
@@ -65,6 +69,7 @@ export class Cache {
     cache: Fig.Cache,
   ): Promise<T> {
     if (!this.cache.has(key)) {
+      if (this.cache.size >= 256) this.cache.delete(this.cache.keys().next().value!);
       this.cache.set(key, new CacheEntry());
     }
     return this.cache.get(key)!.entry(run, cache) as Promise<T>;
@@ -72,6 +77,7 @@ export class Cache {
 
   currentValue<T>(key: string, _cache: Fig.Cache): T | undefined {
     if (!this.cache.has(key)) {
+      if (this.cache.size >= 256) this.cache.delete(this.cache.keys().next().value!);
       this.cache.set(key, new CacheEntry());
     }
     return this.cache.get(key)!.value as T | undefined;

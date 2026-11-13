@@ -4,6 +4,7 @@ import type { ShellContext } from "./types.js";
 export type EditBufferChangedNotification = {
   sessionId?: string;
   cursor?: number;
+  revision?: number;
   buffer?: string;
   context?: ShellContext;
 };

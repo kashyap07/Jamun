@@ -8,9 +8,11 @@ enum Paths {
     static let socket = dataDir.appendingPathComponent("jamun.sock").path
     static let settings = dataDir.appendingPathComponent("settings.json")
     /// Fig completion specs (build output of @withfig/autocomplete).
-    static let specs = dataDir.appendingPathComponent("specs", isDirectory: true)
+    static let resources = Bundle.main.resourceURL ?? URL(fileURLWithPath: "/")
+    static let specs = resources.appendingPathComponent("specs", isDirectory: true)
     /// Icon PNGs shipped with the specs.
-    static let icons = dataDir.appendingPathComponent("icons", isDirectory: true)
+    static let icons = resources.appendingPathComponent("icons", isDirectory: true)
+    static let shellIntegration = resources.appendingPathComponent("shell/jamun.zsh")
 
     /// Built web app. JAMUN_WEB_DIR overrides the copy inside the app bundle.
     static let web: URL = {

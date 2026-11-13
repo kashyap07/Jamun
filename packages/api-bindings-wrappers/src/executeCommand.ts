@@ -19,25 +19,26 @@ export const cleanOutput = (output: string) =>
 export const executeCommandTimeout = async (
   input: Fig.ExecuteCommandInput,
   timeout = window.fig.constants?.os === "windows" ? 20000 : 5000,
+  terminalSessionId = window.globalTerminalSessionId,
 ): Promise<Fig.ExecuteCommandOutput> => {
-  const command = [input.command, ...input.args].join(" ");
+  const command = input.command;
+  const effectiveTimeout = Math.min(120000, Math.max(50, timeout, input.timeout ?? 0));
   try {
-    logger.info(`About to run shell command '${command}'`);
+    logger.debug(`About to run shell command '${command}'`);
     const start = performance.now();
     const result = await withTimeout(
-      Math.max(timeout, input.timeout ?? 0),
+      effectiveTimeout + 500,
       Process.run({
         executable: input.command,
         args: input.args,
         environment: input.env,
         workingDirectory: input.cwd,
-        terminalSessionId: window.globalTerminalSessionId,
-        timeout: input.timeout,
+        terminalSessionId,
+        timeout: effectiveTimeout,
       }),
     );
     const end = performance.now();
     logger.info(`Result of shell command '${command}'`, {
-      result,
       time: end - start,
     });
 
@@ -46,7 +47,7 @@ export const executeCommandTimeout = async (
 
     if (result.exitCode !== 0) {
       logger.warn(
-        `Command ${command} exited with exit code ${result.exitCode}: ${cleanStderr}`,
+        `Command ${command} exited with exit code ${result.exitCode}`,
       );
     }
     return {

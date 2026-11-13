@@ -4,3 +4,7 @@ host/.build/
 node_modules/
 dist/
 *.log
+
+# Python integration-test artifacts
+__pycache__/
+*.pyc

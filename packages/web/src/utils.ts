@@ -13,10 +13,11 @@ const DEFAULT_CONSOLE = {
 export const LOG_DIR = window.fig?.constants?.logsDir;
 
 const NEW_LOG_FN = (...content: unknown[]) => {
-  fs.append(
-    `${LOG_DIR}/logs/specs.log`,
-    `\n${util.format(...content)}`,
-  ).finally(() => DEFAULT_CONSOLE.warn("SPEC LOG:", util.format(...content)));
+  if (LOG_DIR) {
+    void fs.append(`${LOG_DIR}/specs.log`, `\n${util.format(...content).slice(0, 4096)}`)
+      .catch(() => { /* Debug logging must not cause an unhandled rejection. */ });
+  }
+  DEFAULT_CONSOLE.warn("SPEC LOG:", util.format(...content));
 };
 
 export function runPipingConsoleMethods<T>(fn: () => T) {
