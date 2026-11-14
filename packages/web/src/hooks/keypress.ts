@@ -54,6 +54,15 @@ export const useAutocompleteKeypressCallback = (
       const selectedItem = suggestions[selectedIndex];
       const navigate = (delta: number, hideOrShowHistoryOnNegative = false) => {
         if (!suggestions.length) { Keybindings.passThroughKey(); return; }
+        // Up on a popup the user has not moved into belongs to the shell
+        // (history search, atuin). Only after navigating down does Up stay
+        // inside the list, where wrap-around applies as usual.
+        if (delta < 0 && hideOrShowHistoryOnNegative && selectedIndex === 0 && !state.hasChangedIndex &&
+            !getSetting<boolean>(SETTINGS.NAVIGATE_TO_HISTORY)) {
+          setVisibleState(Visibility.HIDDEN_UNTIL_KEYPRESS);
+          Keybindings.passThroughKey();
+          return;
+        }
         let newIndex = selectedIndex + delta;
         let newVisibleState = visibleState;
         if (settings[SETTINGS.SCROLL_WRAP_AROUND]) {

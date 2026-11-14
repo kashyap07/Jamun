@@ -1,0 +1,24 @@
+{
+  "configurations": [
+    {
+      "type": "swift",
+      "request": "launch",
+      "args": [],
+      "cwd": "${workspaceFolder:jamun}/host",
+      "name": "Debug JamunHost (host)",
+      "target": "JamunHost",
+      "configuration": "debug",
+      "preLaunchTask": "swift: Build Debug JamunHost (host)"
+    },
+    {
+      "type": "swift",
+      "request": "launch",
+      "args": [],
+      "cwd": "${workspaceFolder:jamun}/host",
+      "name": "Release JamunHost (host)",
+      "target": "JamunHost",
+      "configuration": "release",
+      "preLaunchTask": "swift: Build Release JamunHost (host)"
+    }
+  ]
+}

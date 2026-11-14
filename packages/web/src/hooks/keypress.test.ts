@@ -2,6 +2,7 @@ import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import { beforeEach, expect, it, vi } from "vitest";
 import { updateSettings } from "@jamun/api-bindings-wrappers";
+import { Keybindings } from "@jamun/api-bindings";
 import { useAutocompleteStore } from "../state";
 import { initialFigState } from "../fig/hooks";
 import { Visibility } from "../state/types";
@@ -31,5 +32,23 @@ it("handles consecutive arrows before React renders and keeps the popup open", a
   expect(useAutocompleteStore.getState().selectedIndex).toBe(2);
   callback({ action: "navigateDown", context: { sessionId: "A", revision: 0 } });
   expect(useAutocompleteStore.getState().selectedIndex).toBe(2);
+  await act(async () => root.unmount());
+});
+it("hands Up to the shell when the popup has not been navigated", async () => {
+  const container = document.createElement("div"); const root = createRoot(container);
+  await act(async () => root.render(React.createElement(Harness)));
+  const passThrough = vi.spyOn(Keybindings, "passThroughKey").mockImplementation(() => {});
+  const key = (action: string) => callback({ action, context: { sessionId: "A", revision: 1 } });
+  key("navigateUp");
+  expect(passThrough).toHaveBeenCalledTimes(1);
+  expect(useAutocompleteStore.getState().visibleState).toBe(Visibility.HIDDEN_UNTIL_KEYPRESS);
+  expect(useAutocompleteStore.getState().selectedIndex).toBe(0);
+  // Once the user is in the list, Up navigates and wraps instead.
+  useAutocompleteStore.setState({ visibleState: Visibility.VISIBLE });
+  key("navigateDown"); key("navigateUp"); key("navigateUp");
+  expect(passThrough).toHaveBeenCalledTimes(1);
+  expect(useAutocompleteStore.getState().selectedIndex).toBe(2);
+  expect(useAutocompleteStore.getState().visibleState).toBe(Visibility.VISIBLE);
+  passThrough.mockRestore();
   await act(async () => root.unmount());
 });
