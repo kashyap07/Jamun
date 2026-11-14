@@ -70,11 +70,12 @@ _jamun_set_keys() {
 # A bare Esc is a prefix of arrow and Alt sequences, so zsh holds it for
 # KEYTIMEOUT (400ms by default) before running any widget. zsh reads the value
 # once per line, so it is lowered before each prompt and restored afterwards.
+# The default is 1 (10ms), the smallest wait zsh supports.
 # JAMUN_KEYTIMEOUT overrides the value in hundredths of a second; 0 disables.
 _jamun_keytimeout() {
   emulate -L zsh
   if [[ $1 == lower ]]; then
-    local want=${JAMUN_KEYTIMEOUT:-5}
+    local want=${JAMUN_KEYTIMEOUT:-1}
     [[ -z $_JAMUN_KEYTIMEOUT && $want == <1-> ]] && (( ${KEYTIMEOUT:-40} > want )) || return 0
     _JAMUN_KEYTIMEOUT=${KEYTIMEOUT:-40} _JAMUN_KEYTIMEOUT_SET=$want
     KEYTIMEOUT=$want

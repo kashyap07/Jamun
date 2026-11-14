@@ -38,7 +38,7 @@ npm run build
 | Ctrl+K | Toggle the description |
 | Ctrl+R | Toggle history suggestions |
 
-To make Esc respond instantly, Jamun lowers zsh's `KEYTIMEOUT` to 50ms while you edit a line (zsh otherwise waits 400ms after Esc). If you use slow two-key bindings such as `jk` in vi mode, set `JAMUN_KEYTIMEOUT` in `~/.zshrc` before Jamun loads: a value in hundredths of a second, or `0` to leave `KEYTIMEOUT` alone.
+To make Esc respond instantly, Jamun lowers zsh's `KEYTIMEOUT` to 10ms, the minimum zsh allows, while you edit a line (zsh otherwise waits 400ms after Esc). If you use slow two-key bindings such as `jk` in vi mode, set `JAMUN_KEYTIMEOUT` in `~/.zshrc` before Jamun loads: a value in hundredths of a second, or `0` to leave `KEYTIMEOUT` alone.
 
 **Settings**
 
