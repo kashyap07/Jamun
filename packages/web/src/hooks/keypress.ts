@@ -9,11 +9,17 @@ import { ACTIONS, AutocompleteAction } from "../actions";
 import { useAutocompleteStore } from "../state";
 import { Visibility } from "../state/types";
 import { scalarLength } from "../state/literalEdit";
+import {
+  ShellHistoryAction,
+  isShellHistoryReady,
+  useShellHistory,
+} from "../shellHistory";
 
 export const setInterceptKeystrokes = (
   intercept: boolean,
   globalIntercept?: boolean,
   currentTerminalSessionId?: string,
+  fallback: Record<string, string> = {},
 ) =>
   Keybindings.setInterceptKeystrokes(
     ACTIONS,
@@ -21,6 +27,7 @@ export const setInterceptKeystrokes = (
     globalIntercept,
     currentTerminalSessionId,
     getSetting<boolean>(SETTINGS.ONLY_SHOW_ON_TAB, false),
+    fallback,
   );
 
 enum KeyCode {
@@ -52,16 +59,36 @@ export const useAutocompleteKeypressCallback = (
         figState: current,
       } = state;
       const selectedItem = suggestions[selectedIndex];
+      const history = useShellHistory.getState();
+      // Up past the top of the popup, or with no popup at all, opens the
+      // shell's history (atuin) in the popup. A multi-line buffer keeps Up
+      // for moving between its lines.
+      const openHistory = () => {
+        if (!isShellHistoryReady(current.shellContext, settings) ||
+            current.buffer.includes("\n")) return false;
+        history.open();
+        return true;
+      };
+      // Enter and Tab swap the whole line for the chosen command.
+      const replaceLine = (command: string, execute: boolean) => {
+        Shell.insert({ insertion: command, deletion: 0, moveLeft: 0, immediate: execute, replaceBuffer: true,
+          expectedBuffer: current.buffer, expectedCursor: scalarLength(current.buffer.slice(0, current.cursorLocation)),
+          revision: shellContext!.revision!, sessionId: shellContext!.sessionId!,
+        }).catch(() => logger.warn("History command was rejected or expired"));
+      };
       const navigate = (delta: number, hideOrShowHistoryOnNegative = false) => {
         if (!suggestions.length) { Keybindings.passThroughKey(); return; }
-        // Up on a popup the user has not moved into belongs to the shell
-        // (history search, atuin). Only after navigating down does Up stay
-        // inside the list, where wrap-around applies as usual.
-        if (delta < 0 && hideOrShowHistoryOnNegative && selectedIndex === 0 && !state.hasChangedIndex &&
+        if (delta < 0 && hideOrShowHistoryOnNegative && selectedIndex === 0 &&
             !getSetting<boolean>(SETTINGS.NAVIGATE_TO_HISTORY)) {
-          setVisibleState(Visibility.HIDDEN_UNTIL_KEYPRESS);
-          Keybindings.passThroughKey();
-          return;
+          if (openHistory()) return;
+          // Without atuin, Up on a popup the user has not moved into belongs
+          // to the shell's own history. After navigating down, Up stays in
+          // the list, where wrap-around applies as usual.
+          if (!state.hasChangedIndex) {
+            setVisibleState(Visibility.HIDDEN_UNTIL_KEYPRESS);
+            Keybindings.passThroughKey();
+            return;
+          }
         }
         let newIndex = selectedIndex + delta;
         let newVisibleState = visibleState;
@@ -79,6 +106,37 @@ export const useAutocompleteKeypressCallback = (
       if (!shellContext?.sessionId || current.shellContext?.sessionId !== shellContext.sessionId ||
           current.shellContext?.revision !== shellContext.revision) {
         Keybindings.passThroughKey();
+        return undefined;
+      }
+
+      if (history.active) {
+        const entry = history.entries[history.selectedIndex];
+        switch (action) {
+          case ShellHistoryAction.OLDER:
+            history.move(-1);
+            break;
+          case ShellHistoryAction.NEWER:
+            // Down past the newest entry leaves history, as in atuin.
+            if (!history.move(1)) history.close();
+            break;
+          case ShellHistoryAction.RUN:
+          case ShellHistoryAction.EDIT:
+            // With nothing to pick, the key does what it does in the shell.
+            if (entry) replaceLine(entry.command, action === ShellHistoryAction.RUN);
+            else Keybindings.passThroughKey();
+            history.close();
+            break;
+          case ShellHistoryAction.CLOSE:
+            history.close();
+            break;
+          default:
+            Keybindings.passThroughKey();
+            break;
+        }
+        return undefined;
+      }
+      if (action === ShellHistoryAction.OPEN) {
+        if (!openHistory()) Keybindings.passThroughKey();
         return undefined;
       }
 

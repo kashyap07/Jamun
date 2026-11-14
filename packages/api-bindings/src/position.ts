@@ -21,12 +21,15 @@ export async function setFrame(frame: {
   height: number;
   anchorX: number;
   offsetFromBaseline: number | undefined;
+  /** place the popup above the caret when it fits there */
+  preferAbove?: boolean;
 }) {
   return request<FrameResult>("window.position", {
     width: frame.width,
     height: frame.height,
     anchorX: frame.anchorX,
     anchorY: frame.offsetFromBaseline ?? 0,
+    preferAbove: frame.preferAbove ?? false,
     dryrun: false,
   });
 }

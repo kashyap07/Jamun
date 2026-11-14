@@ -15,6 +15,7 @@ import {
 import { clearSpecIndex } from "@jamun/autocomplete-parser";
 import { updateSelectSuggestionKeybindings } from "../actions";
 import { generatorCache } from "../generators/helpers";
+import { useShellHistory } from "../shellHistory";
 
 // TODO: expose Subscription type from API binding library
 type Unwrap<T> = T extends Promise<infer U> ? U : T;
@@ -109,6 +110,8 @@ export const useFigAutocomplete = (
 
         const cwd = notification.context?.currentWorkingDirectory ?? null;
         const shellContext = notification.context;
+        // The line was run or aborted: its history list goes with it.
+        if (notification.atPrompt === false) useShellHistory.getState().close();
         setFigState((figState) => ({
           ...figState,
           buffer,

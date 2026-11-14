@@ -51,7 +51,7 @@ class ShellProtocol(unittest.TestCase):
                 trace = Path(self.temp.name + "/trace")
                 self.fail("Shell setup: " + startup.decode(errors="replace") + (trace.read_text()[-12000:] if trace.exists() else ""))
         self.conn.settimeout(2)
-        self.until(lambda m: m.get("t") == "hello")
+        self.hello = self.until(lambda m: m.get("t") == "hello")
         if self._testMethodName != "test_legacy_host_cannot_capture_keys": self.send("hello", 2)
         self.snapshot = self.until(lambda m: m.get("t") == "edit")
 
@@ -144,6 +144,27 @@ class ShellProtocol(unittest.TestCase):
         while time.monotonic() < deadline and b"\r\n40\r\n" not in output:
             if select.select([self.pty], [], [], 0.1)[0]: output += os.read(self.pty, 65536)
         self.assertIn(b"\r\n40\r\n", output)
+
+    def test_replace_swaps_whole_line_and_can_execute(self):
+        # Shell history replaces the line even with the cursor in the middle.
+        self.assertEqual(self.hello.get("caps"), "replace")
+        os.write(self.pty, b"echo old\x02\x02\x02")
+        self.until(lambda m: m.get("t") == "edit" and m.get("buf") == "echo old" and m.get("cur") == 5)
+        escape = lambda text: "v" + text.replace("\\", "\\\\").replace("\n", "\\n").replace("\t", "\\t").replace("\r", "\\r")
+        key = self.capture("tab", b"\t")
+        self.send("insert", "edit", key["keyId"], self.snapshot["rev"], self.snapshot["cur"], int(time.time()*1000)+1500, 0, 0, 0, escape(self.snapshot["buf"]), escape("echo new"), 1)
+        self.assertTrue(self.until(lambda m: m.get("t") == "editAck")["accepted"])
+        edit = self.until(lambda m: m.get("t") == "edit")
+        self.assertEqual((edit["buf"], edit["cur"]), ("echo new", 8))
+        self.done(key)
+        key = self.capture("enter", b"\r")
+        self.send("insert", "run", key["keyId"], self.snapshot["rev"], self.snapshot["cur"], int(time.time()*1000)+1500, 0, 0, 1, escape(self.snapshot["buf"]), escape("echo ran-$((40+2))"), 1)
+        self.assertTrue(self.until(lambda m: m.get("t") == "editAck")["accepted"])
+        self.done(key)
+        deadline, output = time.monotonic() + 2, b""
+        while time.monotonic() < deadline and b"\r\nran-42\r\n" not in output:
+            if select.select([self.pty], [], [], 0.1)[0]: output += os.read(self.pty, 65536)
+        self.assertIn(b"\r\nran-42\r\n", output)
 
     def test_unicode_literal_edit_and_stale_rejection(self):
         os.write(self.pty, "cat 🍇".encode())

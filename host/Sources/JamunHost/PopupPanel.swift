@@ -33,6 +33,8 @@ final class PopupController: NSObject, WKScriptMessageHandler, WKNavigationDeleg
     // Inputs to placement.
     private var requestedSize: NSSize = .zero
     private var anchorX: CGFloat = 0
+    /// Shell history grows upwards from the prompt, like atuin's own list.
+    private var preferAbove = false
     private var caret: CGRect?
     /// False while the terminal is in the background or no shell is at a prompt.
     private var allowed = false
@@ -256,6 +258,9 @@ final class PopupController: NSObject, WKScriptMessageHandler, WKNavigationDeleg
 
     // MARK: placement
 
+    /// True when a requested frame would actually appear on screen.
+    var canShow: Bool { allowed && caret != nil }
+
     func setAllowed(_ allowed: Bool) {
         self.allowed = allowed
         apply()
@@ -268,19 +273,20 @@ final class PopupController: NSObject, WKScriptMessageHandler, WKNavigationDeleg
 
     /// The web app asks for a frame. With `dryrun` nothing moves, the caller
     /// only learns where the popup would land.
-    func position(width: CGFloat, height: CGFloat, anchorX: CGFloat, dryrun: Bool) -> Placement {
+    func position(width: CGFloat, height: CGFloat, anchorX: CGFloat, preferAbove: Bool = false, dryrun: Bool) -> Placement {
         guard width.isFinite, height.isFinite, anchorX.isFinite,
               width > 0, height > 0, width <= 16384, height <= 16384, abs(anchorX) <= 16384 else { return Placement(isAbove: false, isClipped: true) }
         let size = NSSize(width: width, height: height)
         if !dryrun {
             requestedSize = size
             self.anchorX = anchorX
+            self.preferAbove = preferAbove
             apply()
         }
-        return layout(size: size, anchorX: anchorX)?.placement ?? Placement(isAbove: false, isClipped: false)
+        return layout(size: size, anchorX: anchorX, preferAbove: preferAbove)?.placement ?? Placement(isAbove: false, isClipped: false)
     }
 
-    private func layout(size: NSSize, anchorX: CGFloat) -> (frame: NSRect, placement: Placement)? {
+    private func layout(size: NSSize, anchorX: CGFloat, preferAbove: Bool) -> (frame: NSRect, placement: Placement)? {
         guard let caret, let primary = NSScreen.screens.first else { return nil }
         // Accessibility coordinates have a top-left origin. AppKit's is bottom-left.
         let primaryHeight = primary.frame.height
@@ -293,7 +299,8 @@ final class PopupController: NSObject, WKScriptMessageHandler, WKNavigationDeleg
 
         var origin = NSPoint(x: caret.minX + anchorX, y: caretBottom - gap - size.height)
         var isAbove = false
-        if origin.y < visible.minY {
+        let fitsAbove = caretTop + gap + size.height <= visible.maxY
+        if origin.y < visible.minY || (preferAbove && fitsAbove) {
             origin.y = caretTop + gap
             isAbove = true
         }
@@ -306,7 +313,7 @@ final class PopupController: NSObject, WKScriptMessageHandler, WKNavigationDeleg
     private func apply() {
         // The web app requests a 1x1 frame when it has nothing to show.
         guard allowed, requestedSize.width > 1, requestedSize.height > 1,
-              let frame = layout(size: requestedSize, anchorX: anchorX)?.frame
+              let frame = layout(size: requestedSize, anchorX: anchorX, preferAbove: preferAbove)?.frame
         else {
             if panel.isVisible { panel.orderOut(nil) }
             // Keep the hidden panel at the requested size so the web view

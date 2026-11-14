@@ -15,6 +15,10 @@ export interface ShellContext {
   /** unique id of the shell session */
   sessionId?: string;
   integrationVersion?: number;
+  /** optional protocol features of the shell script, e.g. "replace" */
+  capabilities?: string[];
+  /** the shell's $HISTFILE, when it reported one */
+  historyFile?: string;
   revision?: number;
   terminal?: string;
   hostname?: string;

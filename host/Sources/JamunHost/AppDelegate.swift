@@ -21,6 +21,13 @@ final class ShellSession {
     var aliases: [String: String] = [:]
     var environment: [String: String] = [:]
     var keyID: String?
+    /// Optional protocol features the shell script announced in its hello.
+    var capabilities: Set<String> = []
+    /// The shell's $HISTFILE, for history when atuin is not installed.
+    var historyFile = ""
+    /// Keys the popup last asked this shell to capture. zsh drops its
+    /// bindings at the start of every line, so they are sent again then.
+    var keys = ""
 
     init(id: String, connection: SocketServer.Connection) {
         self.id = id
@@ -351,6 +358,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             session.pid = (message["pid"] as? NSNumber)?.intValue ?? 0
             session.tty = message["tty"] as? String ?? ""
             session.shellPath = message["shell"] as? String ?? "/bin/zsh"
+            session.capabilities = Set((message["caps"] as? String ?? "").split(separator: ",").map(String.init))
             connection.sessionID = id
             sessions[id] = session
             server.send(connection, fields: ["hello", "2"])
@@ -363,6 +371,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         switch type {
         case "prompt":
             session.cwd = message["cwd"] as? String ?? session.cwd
+            if let file = message["histfile"] as? String, file.utf8.count <= 4096 { session.historyFile = file }
             session.environment = (message["environment"] as? [String: String] ?? [:]).filter { contextKeys.contains($0.key) && $0.value.utf8.count <= 8192 }
             session.path = session.environment["PATH"] ?? ""
             session.aliases = message["aliases"] as? [String: String] ?? [:]
@@ -372,10 +381,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             session.cursor = min(max(0, (message["cur"] as? NSNumber)?.intValue ?? 0), session.buffer.unicodeScalars.count)
             session.revision = revision
             session.cwd = message["cwd"] as? String ?? session.cwd
+            let startsLine = !session.atPrompt
             session.atPrompt = true
             if activeSessionID != id, let previous = activeSession {
+                previous.keys = ""
                 server.send(previous.connection, fields: ["keys", ""])
                 ProcessRunner.cancelSession(previous.id)
+            }
+            if startsLine, activeSessionID == id, enabled, !session.keys.isEmpty {
+                server.send(connection, fields: ["keys", session.keys])
             }
             activeSessionID = id
             resolveHost(for: session)
@@ -400,6 +414,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                   Int(keyID) != nil else { return }
             guard enabled, popup.isReady, supportedKeys.contains(key), activeSessionID == id,
                   session.atPrompt, message["rev"] as? Int == session.revision else {
+                server.send(connection, fields: ["done", keyID, "0"]); return
+            }
+            // A popup that cannot be on screen must not swallow keys: Up is
+            // captured even while nothing is showing, to open shell history.
+            if !popup.canShow, terminalIsFrontmost { readCaret() }
+            guard popup.canShow else {
                 server.send(connection, fields: ["done", keyID, "0"]); return
             }
             session.keyID = keyID
@@ -433,6 +453,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func resetInterception() {
         for session in sessions.values {
             session.keyID = nil
+            session.keys = ""
             server.send(session.connection, fields: ["keys", ""])
         }
         for pending in pendingEdits.values { pending.reply(.failure(BridgeError("popup_reset"))) }
@@ -449,6 +470,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             "sessionId": session.id,
             "shellPath": session.shellPath,
             "integrationVersion": 2,
+            "capabilities": session.capabilities.sorted(),
+            "historyFile": session.historyFile,
             "revision": session.revision,
             "aliases": session.aliases,
             "environmentVariables": session.environment.map { ["key": $0.key, "value": $0.value] },
@@ -466,6 +489,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             "buffer": session.buffer,
             "cursor": cursor,
             "revision": session.revision,
+            "atPrompt": session.atPrompt,
             "context": context(for: session),
         ])
     }
@@ -499,6 +523,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 width: number("width"),
                 height: number("height"),
                 anchorX: number("anchorX"),
+                preferAbove: params["preferAbove"] as? Bool ?? false,
                 dryrun: params["dryrun"] as? Bool ?? false
             )
             reply(.success(["isAbove": placement.isAbove, "isClipped": placement.isClipped]))
@@ -519,6 +544,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let id = string("sessionId"), let session = sessions[id] else { reply(.failure(BridgeError("unknown_session"))); return }
             let keys = (params["keys"] as? [String] ?? []).filter { supportedKeys.contains($0) }
             let allowedKeys = enabled && activeSessionID == id && session.atPrompt ? keys : []
+            // Remembered even while a command runs, for the next prompt.
+            session.keys = keys.joined(separator: ",")
             server.send(session.connection, fields: ["keys", allowedKeys.joined(separator: ",")])
             reply(.success([:] as [String: Any]))
         case "key.done":
@@ -536,7 +563,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                   let insertion = string("insertion"), !insertion.contains("\0"), insertion.utf8.count <= 65536,
                   let moveLeft = params["moveLeft"] as? Int, moveLeft >= 0,
                   moveLeft <= session.cursor - deletion + insertion.unicodeScalars.count,
-                  let keyID = string("keyId"), keyID == "0" || keyID == session.keyID else {
+                  let keyID = string("keyId"), keyID == "0" || keyID == session.keyID,
+                  params["replaceBuffer"] as? Bool != true || (session.capabilities.contains("replace") && deletion == 0 && moveLeft == 0) else {
                 if let id = string("sessionId"), let target = sessions[id], string("keyId") == target.keyID { target.keyEditRejected = true }
                 Diagnostics.increment("rejected_edits"); reply(.failure(BridgeError("stale_or_invalid_edit"))); return
             }
@@ -547,7 +575,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 "insert", requestID, keyID, String(session.revision), String(session.cursor), String(expires),
                 String(deletion), String(moveLeft), params["immediate"] as? Bool == true ? "1" : "0",
                 "v" + SocketServer.escapeField(session.buffer), "v" + SocketServer.escapeField(insertion),
-            ])
+            ] + (params["replaceBuffer"] as? Bool == true ? ["1"] : []))
             DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
                 self?.pendingEdits.removeValue(forKey: requestID)?.reply(.failure(BridgeError("edit_timeout")))
             }

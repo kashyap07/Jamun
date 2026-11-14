@@ -2,6 +2,8 @@ import {
   WindowPosition,
   Settings,
   Event,
+  Keybindings,
+  Shell,
 } from "@jamun/api-bindings";
 import { SETTINGS } from "@jamun/api-bindings-wrappers";
 import React, {
@@ -49,6 +51,17 @@ import Suggestion from "./components/Suggestion";
 import Description, { DescriptionPosition } from "./components/Description";
 import { setFontFamily, setFontSize, setTheme } from "./fig/themes";
 import LoadingIcon from "./components/LoadingIcon";
+import ShellHistory from "./components/ShellHistory";
+import {
+  HistoryEntry,
+  LIST_KEYS,
+  OPEN_KEYS,
+  isShellHistoryReady,
+  useShellHistory,
+} from "./shellHistory";
+import { isAtuinInstalled, searchAtuin } from "./shellHistory/atuin";
+import { DatedCommand, filterZshHistory, loadZshHistory } from "./shellHistory/zsh";
+import { scalarLength } from "./state/literalEdit";
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore
@@ -64,13 +77,15 @@ const getIconPath = (cwd: string): string => {
   return path.startsWith("//") ? path.slice(1) : path;
 };
 
+const HISTORY_ROWS = 10;
+
 function App() {
   const {
     generatorStates,
     suggestions,
     selectedIndex,
     visibleState,
-    figState: { buffer, cwd, shellContext, receivedAt },
+    figState: { buffer, cursorLocation, cwd, shellContext, receivedAt },
     parserResult: { searchTerm, currentArg },
     settings,
     setSettings,
@@ -81,6 +96,8 @@ function App() {
     setFigState,
   } = useAutocompleteStore();
 
+  const history = useShellHistory();
+  const historyReady = isShellHistoryReady(shellContext, settings);
   const [systemTheme] = useSystemTheme();
   const [isShaking, shake] = useShake();
   const [isLoadingSuggestions, setIsLoadingSuggestions] = useState(false);
@@ -252,17 +269,67 @@ function App() {
     return () => cancelAnimationFrame(frame);
   }, [isHidden, isLoading, receivedAt, shellContext?.sessionId, shellContext?.revision, suggestions]);
 
+  // Shell history: find out once per shell whether atuin can be run.
+  const sessionId = shellContext?.sessionId;
+  const historyFile = shellContext?.historyFile;
+  const { source: historySource, active: historyActive,
+    setSource: setHistorySource, setEntries: setHistoryEntries, close: closeHistory } = history;
+  // atuin when installed, otherwise zsh's own history file. Checked for each
+  // shell, since they need not share a PATH.
+  useEffect(() => {
+    if (!sessionId) return undefined;
+    let isMostRecentEffect = true;
+    isAtuinInstalled(sessionId)
+      .then(async (installed) => {
+        if (installed) return "atuin" as const;
+        return (await loadZshHistory(sessionId, historyFile)).length > 0 ? ("zsh" as const) : undefined;
+      })
+      .catch((error) => {
+        logger.warn(`Shell history is unavailable: ${error}`);
+        return undefined;
+      })
+      .then((source) => { if (isMostRecentEffect) setHistorySource(source); });
+    return () => { isMostRecentEffect = false; };
+  }, [sessionId, historyFile, setHistorySource]);
+  // The history file is read once each time the list opens.
+  const zshHistory = useRef<Promise<DatedCommand[]>>();
+  useEffect(() => { if (!historyActive) zshHistory.current = undefined; }, [historyActive]);
+  // The list belongs to one shell.
+  useEffect(() => closeHistory, [sessionId, closeHistory]);
+  // While the list is open, what is typed on the line is the search query.
+  useEffect(() => {
+    if (!historyActive || !sessionId) return undefined;
+    let isMostRecentEffect = true;
+    const search = () => {
+      if (historySource === "atuin") return searchAtuin(buffer, sessionId);
+      zshHistory.current ??= loadZshHistory(sessionId, historyFile);
+      return zshHistory.current.then((all) => filterZshHistory(all, buffer, Date.now() / 1000));
+    };
+    search()
+      .then((entries) => { if (isMostRecentEffect) setHistoryEntries(entries); })
+      .catch(() => {
+        logger.warn("Shell history search failed");
+        if (isMostRecentEffect) closeHistory();
+      });
+    return () => { isMostRecentEffect = false; };
+  }, [historyActive, historySource, historyFile, buffer, sessionId, setHistoryEntries, closeHistory]);
+
   useEffect(() => {
     logger.info("Setting intercept keystrokes", {
       suggestions,
       interceptKeystrokes,
     });
+    if (historyActive) {
+      Keybindings.setKeyMap(sessionId, LIST_KEYS);
+      return;
+    }
     setInterceptKeystrokes(
       interceptKeystrokes,
       suggestions.length > 0,
-      shellContext?.sessionId,
+      sessionId,
+      historyReady ? OPEN_KEYS : {},
     );
-  }, [interceptKeystrokes, suggestions.length, shellContext?.sessionId, settings]);
+  }, [interceptKeystrokes, suggestions.length, sessionId, settings, historyActive, historyReady]);
   // Updating the current map must not briefly release every key to zsh.
   // Release only when leaving this terminal session or unmounting the UI.
   useEffect(() => () => {
@@ -349,8 +416,10 @@ function App() {
         const frame = {
           height: height || 1,
           width: width || 1,
-          anchorX: onLeft ? -POPOUT_WIDTH : 0,
+          anchorX: onLeft && !historyActive ? -POPOUT_WIDTH : 0,
           offsetFromBaseline: -3,
+          // History reads upwards from the prompt, newest entry nearest.
+          preferAbove: historyActive,
         };
         logger.debug("Setting window position", { frame });
         WindowPosition.setFrame(frame)
@@ -377,16 +446,67 @@ function App() {
         windowState.descriptionPosition,
         hasSpecialArgDescription,
         isHidden,
+        historyActive,
         // eslint-disable-next-line react-hooks/exhaustive-deps
         suggestions[selectedIndex]?.previewComponent,
       ],
     );
 
+  // A click puts the command on the line; only Enter runs one.
+  const pickHistoryEntry = useCallback(
+    (entry: HistoryEntry) => {
+      if (!shellContext?.sessionId || shellContext.revision === undefined) return;
+      Shell.insert({
+        insertion: entry.command, deletion: 0, moveLeft: 0, replaceBuffer: true,
+        expectedBuffer: buffer, expectedCursor: scalarLength(buffer.slice(0, cursorLocation)),
+        revision: shellContext.revision, sessionId: shellContext.sessionId,
+      }).catch(() => logger.warn("History command was rejected or expired"));
+      closeHistory();
+    },
+    [shellContext, buffer, cursorLocation, closeHistory],
+  );
+
   useEffect(() => {
     onResize({});
   }, [onResize]);
 
+  // A hidden web view reports its size late, which delayed the first history
+  // list after launch. Its size is known up front, so ask for it directly.
+  const historyWidth = Math.round(size.suggestionWidth * 1.8);
+  const historyRows = Math.max(1, Math.min(history.entries.length, HISTORY_ROWS));
+  useEffect(() => {
+    if (!historyActive || !history.loaded) return;
+    // Rows, the hint line, and 4px of padding above and below.
+    onResize({ width: historyWidth, height: (historyRows + 1) * size.itemSize + 8 });
+  }, [historyActive, history.loaded, historyRows, historyWidth, size.itemSize, onResize]);
+
   const { ref: autocompleteWindowRef } = useDynamicResizeObserver({ onResize });
+
+  if (historyActive) {
+    // Nothing is drawn until the first results arrive, to avoid a flash.
+    if (!history.loaded) return <div ref={autocompleteWindowRef} id="autocompleteWindow" />;
+    return (
+      <div
+        ref={autocompleteWindowRef}
+        id="autocompleteWindow"
+        className="relative flex flex-col overflow-hidden"
+      >
+        <ShellHistory
+          entries={history.entries}
+          selectedIndex={history.selectedIndex}
+          itemSize={size.itemSize}
+          width={historyWidth}
+          maxRows={HISTORY_ROWS}
+          onPick={pickHistoryEntry}
+        />
+        <span className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+          {history.entries[history.selectedIndex]
+            ? `${history.entries.length - history.selectedIndex} of ${history.entries.length}: ${history.entries[history.selectedIndex].command}`
+            : "No matching history"}
+        </span>
+      </div>
+    );
+  }
 
   if (isHidden) {
     return <div ref={autocompleteWindowRef} id="autocompleteWindow" />;

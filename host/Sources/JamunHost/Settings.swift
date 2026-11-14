@@ -22,9 +22,8 @@ enum Settings {
         var values: [String: Any] = [
             "autocomplete.theme": "system",
             "autocomplete.firstTokenCompletion": true,
-            // Up on the first row wraps to the last instead of closing the
-            // popup. Closing it hands a held-down Up key to the shell's own
-            // binding (atuin), which then fails to start under the key flood.
+            // Down on the last row wraps to the first. Up on the first row
+            // opens shell history when atuin is installed, and wraps otherwise.
             "autocomplete.scrollWrapAround": true,
         ]
         if let font = TerminalProfile.font() {

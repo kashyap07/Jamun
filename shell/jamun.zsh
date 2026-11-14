@@ -109,7 +109,7 @@ _jamun_connect() {
   zle -F -w $_JAMUN_FD _jamun-recv
   _jamun_json "${TTY:-}"; local tty=$REPLY
   _jamun_json "${SHELL:-/bin/zsh}"; local shell=$REPLY
-  _jamun_send "{\"t\":\"hello\",\"version\":2,\"sid\":\"$_JAMUN_SID\",\"pid\":$$,\"tty\":\"$tty\",\"shell\":\"$shell\"}"
+  _jamun_send "{\"t\":\"hello\",\"version\":2,\"sid\":\"$_JAMUN_SID\",\"pid\":$$,\"tty\":\"$tty\",\"shell\":\"$shell\",\"caps\":\"replace\"}"
 }
 _jamun_precmd() {
   emulate -L zsh
@@ -129,7 +129,8 @@ _jamun_precmd() {
     alias_json+="${alias_json:+,}\"$key\":\"$value\""
     (( ${#alias_json} > 65536 )) && { alias_json=; break; }
   done
-  _jamun_send "{\"t\":\"prompt\",\"cwd\":\"$cwd\",\"environment\":{$env_json},\"aliases\":{$alias_json}}"
+  _jamun_json "${HISTFILE:-}"; local histfile=$REPLY
+  _jamun_send "{\"t\":\"prompt\",\"cwd\":\"$cwd\",\"histfile\":\"$histfile\",\"environment\":{$env_json},\"aliases\":{$alias_json}}"
 }
 _jamun_report() {
   emulate -L zsh
@@ -185,19 +186,25 @@ _jamun_key() {
 }
 _jamun_insert() {
   emulate -L zsh
-  # request, key transaction, revision, cursor, expiry(ms), deletion, move, execute, buffer, text
+  # request, key transaction, revision, cursor, expiry(ms), deletion, move, execute, buffer, text,
+  # replace (optional: 1 swaps the whole line for text, used by shell history)
   local request_id=$1 key_id=$2 expected_rev=$3 expected_cursor=$4 expires=$5
   local -i deletion=$6 move_left=$7 immediate=$8
   local buffer_field=$9 text_field=${10}
+  local -i replace=${11:-0}
   local expected_buffer=${(g::)${buffer_field#v}} text=${(g::)${text_field#v}}
   local accepted=false
   if [[ $expected_rev == $_JAMUN_REVISION && $expected_cursor == $CURSOR && $expected_buffer == $BUFFER ]] &&
      [[ $key_id == 0 || $key_id == $_JAMUN_KEY_ID ]] &&
      (( EPOCHREALTIME * 1000 <= expires && deletion >= 0 && deletion <= ${#LBUFFER} && move_left >= 0 && move_left <= ${#LBUFFER} - deletion + ${#text} )); then
-    if (( deletion == ${#LBUFFER} )); then LBUFFER=
-    elif (( deletion > 0 )); then LBUFFER=${LBUFFER[1,-deletion-1]}; fi
-    LBUFFER+=$text
-    (( move_left > 0 )) && (( CURSOR -= move_left ))
+    if (( replace )); then
+      BUFFER=$text; CURSOR=${#BUFFER}
+    else
+      if (( deletion == ${#LBUFFER} )); then LBUFFER=
+      elif (( deletion > 0 )); then LBUFFER=${LBUFFER[1,-deletion-1]}; fi
+      LBUFFER+=$text
+      (( move_left > 0 )) && (( CURSOR -= move_left ))
+    fi
     accepted=true
     [[ $key_id != 0 ]] && _JAMUN_KEY_APPLIED=1
   fi
@@ -224,7 +231,7 @@ _jamun_dispatch() {
       # A legacy host cannot acknowledge v2 key transactions. Never capture
       # input until it has explicitly confirmed the same protocol version.
       if (( _JAMUN_READY )); then _jamun_set_keys ${(s:,:)fields[2]}; else _jamun_disconnect; fi ;;
-    insert) (( ${#fields} == 11 )) && _jamun_insert "${fields[@]:1}" ;;
+    insert) (( ${#fields} == 11 || ${#fields} == 12 )) && _jamun_insert "${fields[@]:1}" ;;
     resync) _JAMUN_LAST=; _jamun_report ;;
   esac
 }

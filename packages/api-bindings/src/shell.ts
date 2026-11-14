@@ -40,6 +40,8 @@ export type ValidatedEdit = {
   deletion: number;
   moveLeft?: number;
   immediate?: boolean;
+  /** swap the whole line for `insertion`; needs the shell's "replace" capability */
+  replaceBuffer?: boolean;
   expectedBuffer: string;
   expectedCursor: number;
   revision: number;

@@ -6,6 +6,8 @@ export type EditBufferChangedNotification = {
   cursor?: number;
   revision?: number;
   buffer?: string;
+  /** false once the line was accepted or aborted */
+  atPrompt?: boolean;
   context?: ShellContext;
 };
 

@@ -94,13 +94,28 @@ export function setInterceptKeystrokes(
   globalIntercept?: boolean,
   currentTerminalSessionId?: string,
   showOnTab = false,
+  /** key -> action, captured whenever the popup itself does not claim the key */
+  fallback: Record<string, string> = {},
 ) {
   if (!currentTerminalSessionId) return;
   const map = intercept || globalIntercept ? buildKeyMap(actions, intercept) : new Map<string, string>();
   if (!intercept && globalIntercept && showOnTab && userBindings.tab !== "ignore") map.set("tab", "showAutocomplete");
-  if (map.size) sessionKeyMaps.set(currentTerminalSessionId, map);
-  else sessionKeyMaps.delete(currentTerminalSessionId);
-  notify("keys.intercept", { keys: [...map.keys()], sessionId: currentTerminalSessionId });
+  for (const [key, identifier] of Object.entries(fallback)) {
+    if (SUPPORTED_KEYS.has(key) && !map.has(key) && userBindings[key] !== "ignore") map.set(key, identifier);
+  }
+  applyKeyMap(currentTerminalSessionId, map);
+}
+
+/** Capture exactly these keys, ignoring the regular popup actions. */
+export function setKeyMap(sessionId: string | undefined, keys: Record<string, string>) {
+  if (!sessionId) return;
+  applyKeyMap(sessionId, new Map(Object.entries(keys).filter(([key]) => SUPPORTED_KEYS.has(key))));
+}
+
+function applyKeyMap(sessionId: string, map: Map<string, string>) {
+  if (map.size) sessionKeyMaps.set(sessionId, map);
+  else sessionKeyMaps.delete(sessionId);
+  notify("keys.intercept", { keys: [...map.keys()], sessionId });
 }
 
 on<{ key: string; keyId: string; context?: ShellContext }>("key", ({ key, keyId, context }) => {

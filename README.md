@@ -38,6 +38,22 @@ npm run build
 | Ctrl+K | Toggle the description |
 | Ctrl+R | Toggle history suggestions |
 
+**Shell history**
+
+↑ opens your command history inside the popup: on an empty prompt, on a popup you have not moved into, or from the top row of the list. What you type filters it with a fuzzy search.
+
+- With [atuin](https://atuin.sh) installed, the list is atuin's history, searched by atuin itself across all your machines' synced history.
+- Without atuin, the list comes from zsh's own history file (`~/.zsh_history` and `$HISTFILE`). Times are shown only if zsh records them (`setopt EXTENDED_HISTORY`), and commands from the current window appear once zsh has written them to the file (`setopt INC_APPEND_HISTORY` makes that immediate).
+
+| Key | Action |
+| --- | --- |
+| ↑ / ↓ | Older / newer. ↓ past the newest entry closes the list |
+| Enter | Run the selected command |
+| Tab | Put the command on the line to edit |
+| Esc | Close the list and keep what you typed |
+
+Ctrl+R is unchanged. To turn this off and give ↑ back to the shell, set `"autocomplete.shellHistory": false` in `~/.jamun/settings.json`.
+
 To make Esc respond instantly, Jamun lowers zsh's `KEYTIMEOUT` to 10ms, the minimum zsh allows, while you edit a line (zsh otherwise waits 400ms after Esc). If you use slow two-key bindings such as `jk` in vi mode, set `JAMUN_KEYTIMEOUT` in `~/.zshrc` before Jamun loads: a value in hundredths of a second, or `0` to leave `KEYTIMEOUT` alone.
 
 **Settings**
