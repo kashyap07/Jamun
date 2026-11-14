@@ -18,6 +18,15 @@ BUNDLE="$STAGING/Jamun.app"
 mkdir -p "$BUNDLE/Contents/MacOS" "$BUNDLE/Contents/Resources/shell" "$BUNDLE/Contents/Resources/licenses"
 cp "$BIN_DIR/JamunHost" "$BUNDLE/Contents/MacOS/JamunHost"
 cp "$ROOT/host/Info.plist" "$BUNDLE/Contents/Info.plist"
+# package.json is the single source for the version. The build number counts
+# commits so two builds of the same version can still be told apart.
+VERSION="$(node -p "require('$ROOT/package.json').version")"
+BUILD_NUMBER="$(git -C "$ROOT" rev-list --count HEAD 2>/dev/null || echo 0)"
+COMMIT="$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+[[ -z "$(git -C "$ROOT" status --porcelain 2>/dev/null)" ]] || COMMIT+="-dirty"
+plutil -replace CFBundleShortVersionString -string "$VERSION" "$BUNDLE/Contents/Info.plist"
+plutil -replace CFBundleVersion -string "$BUILD_NUMBER" "$BUNDLE/Contents/Info.plist"
+plutil -replace JamunCommit -string "$COMMIT" "$BUNDLE/Contents/Info.plist"
 cp "$ROOT/assets/icon/Jamun.icns" "$BUNDLE/Contents/Resources/Jamun.icns"
 # With Xcode, compile the Icon Composer document so macOS 26+ shows the real Liquid Glass icon.
 # Without it the committed .icns is used, which newer macOS draws on a generic plate.

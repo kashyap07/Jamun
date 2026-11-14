@@ -34,6 +34,21 @@ enum ShellIntegration {
             try next.write(to: zshrc, atomically: true, encoding: .utf8)
         }
     }
+    /// Keeps an already installed script in step with the running app, so a new
+    /// build never talks to a stale integration. Never installs from scratch and
+    /// never replaces a symlink (a developer pointing at their checkout).
+    @discardableResult
+    static func refresh(from source: URL = Paths.shellIntegration,
+                        to target: URL = Paths.dataDir.appendingPathComponent("jamun.zsh")) throws -> Bool {
+        let manager = FileManager.default
+        guard manager.fileExists(atPath: target.path),
+              (try? manager.destinationOfSymbolicLink(atPath: target.path)) == nil else { return false }
+        let data = try Data(contentsOf: source)
+        guard !data.isEmpty, (try? Data(contentsOf: target)) != data else { return false }
+        try data.write(to: target, options: .atomic)
+        try manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: target.path)
+        return true
+    }
     static func uninstall() throws {
         if FileManager.default.fileExists(atPath: zshrc.path) {
             let text = try String(contentsOf: zshrc, encoding: .utf8)

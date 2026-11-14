@@ -123,6 +123,28 @@ class ShellProtocol(unittest.TestCase):
         self.assertTrue(self.marker.exists())
         self.assertEqual(self.conn.recv(65536), b"")
 
+    def test_escape_is_delivered_without_default_keytimeout(self):
+        # Esc is a prefix of other sequences; zsh would hold it for 400ms.
+        self.send("keys", "up,down,esc")
+        time.sleep(0.04)
+        started = time.monotonic()
+        os.write(self.pty, b"\x1b")
+        key = self.until(lambda m: m.get("t") == "key" and m.get("key") == "esc")
+        self.assertLess(time.monotonic() - started, 0.2)
+        self.done(key)
+        # Arrow sequences still resolve as one key while the timeout is short.
+        os.write(self.pty, b"\x1b[B")
+        key = self.until(lambda m: m.get("t") == "key" and m.get("key") == "down")
+        self.done(key)
+        # Commands still see the user's own timeout.
+        os.write(self.pty, b"echo $KEYTIMEOUT")
+        self.until(lambda m: m.get("t") == "edit" and m.get("buf") == "echo $KEYTIMEOUT")
+        os.write(self.pty, b"\r")
+        deadline, output = time.monotonic() + 2, b""
+        while time.monotonic() < deadline and b"\r\n40\r\n" not in output:
+            if select.select([self.pty], [], [], 0.1)[0]: output += os.read(self.pty, 65536)
+        self.assertIn(b"\r\n40\r\n", output)
+
     def test_unicode_literal_edit_and_stale_rejection(self):
         os.write(self.pty, "cat 🍇".encode())
         self.until(lambda m: m.get("t") == "edit" and m.get("buf") == "cat 🍇")

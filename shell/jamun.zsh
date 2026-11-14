@@ -6,7 +6,7 @@ zmodload zsh/datetime 2>/dev/null || return 0
 typeset -g _JAMUN_LOADED=1
 autoload -Uz add-zsh-hook add-zle-hook-widget
 typeset -g _JAMUN_SOCK=${JAMUN_SOCKET:-$HOME/.jamun/jamun.sock}
-typeset -g _JAMUN_FD= _JAMUN_LAST= _JAMUN_KEY_ID=0
+typeset -g _JAMUN_FD= _JAMUN_LAST= _JAMUN_KEY_ID=0 _JAMUN_KEYTIMEOUT= _JAMUN_KEYTIMEOUT_SET=
 typeset -g _JAMUN_SID="$$-$RANDOM$RANDOM"
 typeset -gi _JAMUN_REVISION=0 _JAMUN_KEY_COUNTER=0 _JAMUN_KEY_APPLIED=0 _JAMUN_KEY_REJECTED=0 _JAMUN_READY=0
 typeset -gA _JAMUN_ORIG _JAMUN_SEQS
@@ -67,6 +67,23 @@ _jamun_set_keys() {
   done
   _JAMUN_BOUND=("${next_bound[@]}")
 }
+# A bare Esc is a prefix of arrow and Alt sequences, so zsh holds it for
+# KEYTIMEOUT (400ms by default) before running any widget. zsh reads the value
+# once per line, so it is lowered before each prompt and restored afterwards.
+# JAMUN_KEYTIMEOUT overrides the value in hundredths of a second; 0 disables.
+_jamun_keytimeout() {
+  emulate -L zsh
+  if [[ $1 == lower ]]; then
+    local want=${JAMUN_KEYTIMEOUT:-5}
+    [[ -z $_JAMUN_KEYTIMEOUT && $want == <1-> ]] && (( ${KEYTIMEOUT:-40} > want )) || return 0
+    _JAMUN_KEYTIMEOUT=${KEYTIMEOUT:-40} _JAMUN_KEYTIMEOUT_SET=$want
+    KEYTIMEOUT=$want
+  elif [[ -n $_JAMUN_KEYTIMEOUT ]]; then
+    # Leave it alone if something else changed it in the meantime.
+    [[ $KEYTIMEOUT == $_JAMUN_KEYTIMEOUT_SET ]] && KEYTIMEOUT=$_JAMUN_KEYTIMEOUT
+    _JAMUN_KEYTIMEOUT=
+  fi
+}
 _jamun_disconnect() {
   emulate -L zsh
   if [[ -n $_JAMUN_FD ]]; then
@@ -75,6 +92,7 @@ _jamun_disconnect() {
   fi
   _JAMUN_FD=; _JAMUN_LAST=; _JAMUN_KEY_ID=0; _JAMUN_READY=0
   _jamun_set_keys
+  _jamun_keytimeout restore
 }
 _jamun_send() {
   emulate -L zsh
@@ -95,6 +113,7 @@ _jamun_connect() {
 _jamun_precmd() {
   emulate -L zsh
   _jamun_connect || return 0
+  _jamun_keytimeout lower
   _jamun_json "$PWD"; local cwd=$REPLY
   local env_json= alias_json= name key value
   # Context only: never serialize the entire environment or credential values.
@@ -128,6 +147,7 @@ _jamun_line_init() { _JAMUN_LAST=; _jamun_set_keys; _jamun_report; }
 _jamun_line_finish() {
   emulate -L zsh
   _jamun_set_keys
+  _jamun_keytimeout restore
   (( ++_JAMUN_REVISION ))
   _jamun_send "{\"t\":\"finish\",\"rev\":$_JAMUN_REVISION}"
 }

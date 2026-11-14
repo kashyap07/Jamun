@@ -61,7 +61,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: lifecycle
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        Log.write("jamun host started, pid \(ProcessInfo.processInfo.processIdentifier)")
+        Log.write("jamun host \(AppVersion.description) started, pid \(ProcessInfo.processInfo.processIdentifier)")
+        do {
+            if try ShellIntegration.refresh() { Log.write("shell integration updated to match this build; new shells will load it") }
+        } catch { Log.write("shell integration refresh failed: \(error.localizedDescription)") }
         enabled = Settings.all()["jamun.enabled"] as? Bool ?? true
         setUpStatusItem()
 
@@ -140,6 +143,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         sessionsItem = NSMenuItem(title: "Shells connected: 0", action: nil, keyEquivalent: "")
         enabledItem = NSMenuItem(title: "Enable Autocomplete", action: #selector(toggleEnabled), keyEquivalent: "")
         healthItem = NSMenuItem(title: "Popup: loading", action: nil, keyEquivalent: "")
+        menu.addItem(NSMenuItem(title: "Jamun \(AppVersion.description)", action: nil, keyEquivalent: ""))
+        menu.addItem(.separator())
         menu.addItem(enabledItem)
         menu.addItem(healthItem)
         menu.addItem(trustItem)
@@ -219,6 +224,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let manager = FileManager.default
         let resourcesOK = [Paths.web.appendingPathComponent("index.html"), Paths.specs.appendingPathComponent("index.json"), Paths.shellIntegration].allSatisfy { manager.fileExists(atPath: $0.path) }
         showMessage("Jamun diagnostics", [
+            "Version: \(AppVersion.description)",
             "Host socket: \(socketReady ? "ready" : "unavailable")",
             "Shells connected: \(sessions.count)",
             "Shell integration: \(ShellIntegration.installed ? "installed" : "not installed")",

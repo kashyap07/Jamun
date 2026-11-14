@@ -17,7 +17,9 @@ Development and installation:
 7. Use **Show Diagnostics…** if suggestions do not appear.
 
 - If zsh uses a custom `ZDOTDIR`, ensure the host receives that value before using the installer, or add this line to your actual zshrc manually: `[[ -r "$HOME/.jamun/jamun.zsh" ]] && source "$HOME/.jamun/jamun.zsh"`.
-- A rebuild no longer rewrites live shell resources. Run **Set Up Shell Integration…** again when the bundled integration changes.
+- A rebuild does not touch live shell resources. On launch, the app replaces an already installed `~/.jamun/jamun.zsh` when it differs from the bundled copy (a symlink is left alone). Shells that are already open keep the old script until restarted.
+- The version comes from `package.json`; the build stamps it into the app with the commit count and short commit. It shows at the top of the Jamun menu and in **Show Diagnostics…**.
+- `npm run release` runs the checks, builds, verifies the bundle, and writes `build/release/Jamun-<version>-<arch>.zip`. The build is not notarized: on another Mac the first launch must be approved in System Settings → Privacy & Security → **Open Anyway**.
 - For local development only, `JAMUN_WEB_DIR` can point the host at a built web directory.
 - The unsigned development build uses a discovered Apple Development identity when available, otherwise ad-hoc signing. Ad-hoc rebuilds may require granting Accessibility access again.
 

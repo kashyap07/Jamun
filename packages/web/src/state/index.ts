@@ -296,7 +296,6 @@ export const useAutocompleteStore = createWithEqualityFn<AutocompleteState>(
 
         setParserResult: (
           parserResult: ArgumentParserResult,
-          hasBackspacedToNewToken: boolean,
           largeBufferChange: boolean,
         ) =>
           setNamed("setParserResult", (state) => {
@@ -350,10 +349,6 @@ export const useAutocompleteStore = createWithEqualityFn<AutocompleteState>(
               if (hasNewArg) {
                 visibleState = Visibility.HIDDEN_UNTIL_SHOWN;
               }
-            }
-
-            if (hasBackspacedToNewToken) {
-              visibleState = Visibility.HIDDEN_UNTIL_KEYPRESS;
             }
 
             if (largeBufferChange && !state.justInserted) {

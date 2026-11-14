@@ -21,6 +21,12 @@ npm run build
 2. Choose **Set Up Shell Integration…** from the Jamun menu.
 3. Grant **Accessibility** access, then open a new terminal window.
 
+**Updating and sharing**
+
+- To update, quit Jamun, replace the app in Applications, and open it again. The shell integration refreshes itself on launch; open a new terminal window afterwards. The version is at the top of the Jamun menu.
+- To share a build, run `npm run release` and send `build/release/Jamun-<version>-<arch>.zip`. It runs on Apple Silicon Macs only.
+- The build is not notarized, so on another Mac the first launch is blocked. Open it once, then go to System Settings → Privacy & Security and choose **Open Anyway**.
+
 **Keys**
 
 | Key | Action |
@@ -31,6 +37,8 @@ npm run build
 | Esc | Dismiss the popup |
 | Ctrl+K | Toggle the description |
 | Ctrl+R | Toggle history suggestions |
+
+To make Esc respond instantly, Jamun lowers zsh's `KEYTIMEOUT` to 50ms while you edit a line (zsh otherwise waits 400ms after Esc). If you use slow two-key bindings such as `jk` in vi mode, set `JAMUN_KEYTIMEOUT` in `~/.zshrc` before Jamun loads: a value in hundredths of a second, or `0` to leave `KEYTIMEOUT` alone.
 
 **Settings**
 

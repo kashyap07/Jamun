@@ -55,6 +55,19 @@ let before = "export KEEP=yes\n"
 let block = "# >>> Jamun shell integration >>>\nsource something\n# <<< Jamun shell integration <<<\n"
 check((try? ShellIntegration.removingBlock(before + block + block)) == before, "remove only managed blocks")
 do { _ = try ShellIntegration.removingBlock("# >>> Jamun shell integration >>>"); check(false, "incomplete block") } catch { }
+let bundledScript = directory.appendingPathComponent("bundled.zsh"), installedScript = directory.appendingPathComponent("installed.zsh")
+try "new".write(to: bundledScript, atomically: true, encoding: .utf8)
+check((try? ShellIntegration.refresh(from: bundledScript, to: installedScript)) == false, "refresh never installs from scratch")
+check(!FileManager.default.fileExists(atPath: installedScript.path), "refresh left no file behind")
+try "old".write(to: installedScript, atomically: true, encoding: .utf8)
+check((try? ShellIntegration.refresh(from: bundledScript, to: installedScript)) == true, "refresh replaces a stale script")
+check((try? String(contentsOf: installedScript, encoding: .utf8)) == "new", "refreshed script content")
+check((try? ShellIntegration.refresh(from: bundledScript, to: installedScript)) == false, "refresh is a no-op when current")
+let linkedScript = directory.appendingPathComponent("linked.zsh"), checkoutScript = directory.appendingPathComponent("checkout.zsh")
+try "checkout".write(to: checkoutScript, atomically: true, encoding: .utf8)
+try FileManager.default.createSymbolicLink(at: linkedScript, withDestinationURL: checkoutScript)
+check((try? ShellIntegration.refresh(from: bundledScript, to: linkedScript)) == false, "refresh leaves symlinks alone")
+check((try? String(contentsOf: checkoutScript, encoding: .utf8)) == "checkout", "symlink target untouched")
 let spec = directory.appendingPathComponent("ok.js")
 try "export default {}".write(to: spec, atomically: true, encoding: .utf8)
 let settings: [String: Any] = ["jamun.allowLocalSpecs": true, "autocomplete.developerMode": true, "autocomplete.devCompletionsFolder": directory.path]

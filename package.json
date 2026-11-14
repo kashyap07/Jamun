@@ -1,7 +1,7 @@
 {
   "name": "jamun",
   "private": true,
-  "version": "0.0.1",
+  "version": "0.0.2",
   "license": "MIT",
   "workspaces": [
     "packages/*"
@@ -16,7 +16,8 @@
     "test:native": "./scripts/test-native.sh",
     "test:webkit": "./scripts/test-webkit.sh",
     "check": "npm test && npm run typecheck && npm run test:shell && npm run test:native",
-    "test:package": "./scripts/test-package.sh"
+    "test:package": "./scripts/test-package.sh",
+    "release": "./scripts/release.sh"
   },
   "devDependencies": {
     "@withfig/autocomplete": "2.692.3",

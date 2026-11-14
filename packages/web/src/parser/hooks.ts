@@ -47,9 +47,6 @@ export const useParseArgumentsEffect = (
   useEffect(() => {
     let isMostRecentEffect = true;
 
-    const tokens = command?.tokens || [];
-    const oldTokens = oldCommand?.tokens || [];
-
     const started = performance.now();
     setLoading(true);
     // Only run if we didn't error in bash parser.
@@ -59,15 +56,11 @@ export const useParseArgumentsEffect = (
         setLoading(false);
         Event.measure("parse_ms", performance.now() - started);
 
-        const hasBackspacedToNewToken =
-          tokens.length > 0 && tokens.length < oldTokens.length &&
-          oldTokens[tokens.length - 1].text === tokens[tokens.length - 1].text;
-
         const text = command?.originalTree.text ?? "";
         const oldText = oldCommand?.originalTree.text ?? "";
         const largeBufferChange = !isBufferDifferenceFromTyping(text, oldText);
 
-        setParserResult(result, hasBackspacedToNewToken, largeBufferChange);
+        setParserResult(result, largeBufferChange);
       })
       .catch((err) => {
         if (!isMostRecentEffect) return;
